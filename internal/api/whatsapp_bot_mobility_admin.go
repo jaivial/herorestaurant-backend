@@ -125,7 +125,7 @@ func (s *Server) botMobilityPropose(ctx context.Context, rid int, msg botWebhook
 	if rerr := botSpecialRowAllowedFor(row, "editan", "edita"); rerr != nil {
 		return botJSON(map[string]any{"error": rerr.Error()}), nil
 	}
-	cur, cerr := botMobilityScanCurrent(s.db.QueryRowContext(ctx, botMobilityCurrentSelect, rid, bookingID))
+	cur, cerr := botMobilityScanCurrent(s.db.QueryRowContext(ctx, portableSQL(botMobilityCurrentSelect), rid, bookingID))
 	if cerr != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
 	}
@@ -159,7 +159,7 @@ func (s *Server) botMobilityExecute(ctx context.Context, tx *sql.Tx, rid int, ms
 	if json.Unmarshal([]byte(p.Args), &in) != nil {
 		return "", errors.New("propuesta ilegible")
 	}
-	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()+" FOR UPDATE"), rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
 	}
@@ -173,7 +173,7 @@ func (s *Server) botMobilityExecute(ctx context.Context, tx *sql.Tx, rid int, ms
 	if full != p.Before {
 		return stale(errBotSpecialStale.Error())
 	}
-	cur, cerr := botMobilityScanCurrent(tx.QueryRowContext(ctx, botMobilityCurrentSelect, rid, p.BookingID))
+	cur, cerr := botMobilityScanCurrent(tx.QueryRowContext(ctx, portableSQL(botMobilityCurrentSelect), rid, p.BookingID))
 	if cerr != nil {
 		return "", errors.New("error interno")
 	}
@@ -205,11 +205,12 @@ func (s *Server) botMobilityExecute(ctx context.Context, tx *sql.Tx, rid int, ms
 	sets := make([]string, len(changes))
 	vals := make([]any, len(changes))
 	for i, c := range changes {
-		sets[i] = "`" + c.Col + "` = ?"
+		sets[i] = sqlFragment("`", `"`) + c.Col + sqlFragment("`", `"`) + " = ?"
 		vals[i] = c.Val
 	}
 	vals = append(vals, rid, p.BookingID)
-	if _, err := tx.ExecContext(ctx, "UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?", vals...); err != nil {
+	// Whitelisted column names quoted per dialect; rebound once.
+	if _, err := tx.ExecContext(ctx, portableSQL("UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?"), vals...); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
 	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, cols...)
@@ -219,7 +220,7 @@ func (s *Server) botMobilityExecute(ctx context.Context, tx *sql.Tx, rid int, ms
 	// The panel does not record mobility changes in booking_modifications; parity.
 	notice := fmt.Sprintf("Reserva #%d: %s. No se ha avisado al cliente.", p.BookingID, botMobilityChangeText(in, newHas, newPeople))
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "changed_columns": cols, "approval_message_id": msg.MessageID})

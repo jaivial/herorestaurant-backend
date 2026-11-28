@@ -46,7 +46,7 @@ func botGMenuPartyText(orig, party int) string {
 // party change inside the proposal transaction.
 func (s *Server) botGMenuApplyPartyDelta(ctx context.Context, tx *sql.Tx, rid int, bookingID int64, date string, orig, party int, name, phone string) error {
 	var floor, salon sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT preferred_floor_number, preferred_salon_id FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, bookingID).Scan(&floor, &salon); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT preferred_floor_number, preferred_salon_id FROM bookings WHERE restaurant_id = ? AND id = ?`), rid, bookingID).Scan(&floor, &salon); err != nil {
 		return errors.New("error interno")
 	}
 	var f, sl any
@@ -59,7 +59,7 @@ func (s *Server) botGMenuApplyPartyDelta(ctx context.Context, tx *sql.Tx, rid in
 	if err := s.applyBookingLocationDelta(ctx, tx, rid, date, f, sl, orig, date, f, sl, party); err != nil {
 		return errors.New("no se pudo actualizar la ocupación; no se aplicó nada")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, 'party_size', ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`,
+	if _, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, 'party_size', ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, 'party_size', ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))`),
 		rid, bookingID, date, fmt.Sprint(orig), fmt.Sprint(party), name, phone); err != nil {
 		return errors.New("no se pudo registrar el historial; no se aplicó nada")
 	}

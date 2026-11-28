@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Salons (dining rooms) per floor — backoffice config.
@@ -53,11 +54,11 @@ const (
 func (s *Server) loadSalons(ctx context.Context, restaurantID int, date string) ([]boConfigSalon, error) {
 	overrides := map[int]bool{}
 	if date != "" {
-		rows, err := s.db.QueryContext(ctx, `
+		rows, err := s.db.QueryContext(ctx, portableSQL(`
 			SELECT salon_id, is_active
 			FROM restaurant_salons_overrides
 			WHERE restaurant_id = ? AND date = ?
-		`, restaurantID, date)
+		`), restaurantID, date)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +76,7 @@ func (s *Server) loadSalons(ctx context.Context, restaurantID int, date string) 
 		}
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT sal.id, sal.floor_id, f.floor_number, f.floor_name,
 		       sal.name, sal.has_capacity_limit, sal.capacity_limit, sal.is_active, sal.display_order,
 		       DATE_FORMAT(sal.specific_date, '%Y-%m-%d')
@@ -84,7 +85,16 @@ func (s *Server) loadSalons(ctx context.Context, restaurantID int, date string) 
 		WHERE sal.restaurant_id = ?
 		  AND (sal.specific_date IS NULL OR sal.specific_date = NULLIF(?, ''))
 		ORDER BY f.floor_number ASC, sal.display_order ASC, sal.id ASC
-	`, restaurantID, date)
+	`, `
+		SELECT sal.id, sal.floor_id, f.floor_number, f.floor_name,
+		       sal.name, sal.has_capacity_limit, sal.capacity_limit, sal.is_active, sal.display_order,
+		       to_char(sal.specific_date, 'YYYY-MM-DD')
+		FROM restaurant_salons sal
+		JOIN restaurant_floors f ON f.id = sal.floor_id AND f.restaurant_id = sal.restaurant_id
+		WHERE sal.restaurant_id = ?
+		  AND (sal.specific_date IS NULL OR sal.specific_date = CAST(NULLIF(CAST(? AS text), '') AS date))
+		ORDER BY f.floor_number ASC, sal.display_order ASC, sal.id ASC
+	`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -162,9 +172,9 @@ func normalizeSalonWrite(restaurantID int, req boConfigSalonWriteRequest) (boCon
 
 func (s *Server) salonFloorBelongs(ctx context.Context, restaurantID, floorID int) (bool, error) {
 	var one int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT 1 FROM restaurant_floors WHERE id = ? AND restaurant_id = ?
-	`, floorID, restaurantID).Scan(&one)
+	`), floorID, restaurantID).Scan(&one)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, nil
@@ -301,19 +311,18 @@ func (s *Server) handleBOConfigSalonsCreate(w http.ResponseWriter, r *http.Reque
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	res, err := s.db.ExecContext(r.Context(), `
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO restaurant_salons (restaurant_id, floor_id, name, has_capacity_limit, capacity_limit, is_active, specific_date)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, a.ActiveRestaurantID, req.FloorID, req.Name, boolToInt(req.HasCapacityLimit), req.CapacityLimit, boolToInt(active), dateToNull(req.Date))
+	`), "id", a.ActiveRestaurantID, req.FloorID, req.Name, boolToInt(req.HasCapacityLimit), req.CapacityLimit, boolToInt(active), dateToNull(req.Date))
 	if err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
+		if sqldb.IsUniqueViolation(err) { // MySQL 1062 ("Duplicate entry") or SQLSTATE 23505
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "ya existe un salon con ese nombre en la planta"})
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando salon")
 		return
 	}
-	id, _ := res.LastInsertId()
 
 	salons, err := s.loadSalons(r.Context(), a.ActiveRestaurantID, req.Date)
 	if err != nil {
@@ -377,9 +386,9 @@ func (s *Server) handleBOConfigSalonsUpdate(w http.ResponseWriter, r *http.Reque
 	}
 
 	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT 1 FROM restaurant_salons WHERE id = ? AND restaurant_id = ?
-	`, salonID, a.ActiveRestaurantID).Scan(&exists); err != nil {
+	`), salonID, a.ActiveRestaurantID).Scan(&exists); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "salon no encontrado"})
 		return
 	}
@@ -388,12 +397,12 @@ func (s *Server) handleBOConfigSalonsUpdate(w http.ResponseWriter, r *http.Reque
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE restaurant_salons
 		SET floor_id = ?, name = ?, has_capacity_limit = ?, capacity_limit = ?, is_active = ?
 		WHERE id = ? AND restaurant_id = ?
-	`, req.FloorID, req.Name, boolToInt(req.HasCapacityLimit), req.CapacityLimit, boolToInt(active), salonID, a.ActiveRestaurantID); err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
+	`), []any{req.FloorID, req.Name, boolToInt(req.HasCapacityLimit), req.CapacityLimit, boolToInt(active), salonID, a.ActiveRestaurantID}...); err != nil {
+		if sqldb.IsUniqueViolation(err) { // MySQL 1062 ("Duplicate entry") or SQLSTATE 23505
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "ya existe un salon con ese nombre en la planta"})
 			return
 		}
@@ -427,9 +436,9 @@ func (s *Server) handleBOConfigSalonsDelete(w http.ResponseWriter, r *http.Reque
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "salonId invalido"})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM restaurant_salons WHERE id = ? AND restaurant_id = ?
-	`, salonID, a.ActiveRestaurantID)
+	`), salonID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando salon")
 		return
@@ -458,9 +467,9 @@ func (s *Server) handleBOConfigSalonsDayStatusSet(w http.ResponseWriter, r *http
 	}
 
 	var defaultActive int
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT is_active FROM restaurant_salons WHERE id = ? AND restaurant_id = ?
-	`, req.SalonID, a.ActiveRestaurantID).Scan(&defaultActive)
+	`), req.SalonID, a.ActiveRestaurantID).Scan(&defaultActive)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "salon no encontrado"})
 		return
@@ -468,16 +477,16 @@ func (s *Server) handleBOConfigSalonsDayStatusSet(w http.ResponseWriter, r *http
 
 	if (defaultActive != 0) == req.Active {
 		// Same as the effective default: drop the override.
-		_, _ = s.db.ExecContext(r.Context(), `
+		_, _ = s.db.ExecContext(r.Context(), portableSQL(`
 			DELETE FROM restaurant_salons_overrides
 			WHERE restaurant_id = ? AND date = ? AND salon_id = ?
-		`, a.ActiveRestaurantID, req.Date, req.SalonID)
+		`), a.ActiveRestaurantID, req.Date, req.SalonID)
 	} else {
-		if _, err := s.db.ExecContext(r.Context(), `
+		if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO restaurant_salons_overrides (restaurant_id, date, salon_id, is_active)
 			VALUES (?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE is_active = VALUES(is_active)
-		`, a.ActiveRestaurantID, req.Date, req.SalonID, boolToInt(req.Active)); err != nil {
+		`, `INSERT INTO restaurant_salons_overrides (restaurant_id, date, salon_id, is_active) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, date, salon_id) DO UPDATE SET is_active = EXCLUDED.is_active`), a.ActiveRestaurantID, req.Date, req.SalonID, boolToInt(req.Active)); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando salon del dia")
 			return
 		}

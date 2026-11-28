@@ -90,6 +90,11 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	// approved panel writes (the missing halves of the backoffice coverage).
 	defs = append(defs, botToolDefsStaffReads()...)
 	defs = append(defs, botPanelChangeToolDefs()...)
+	// Coordination id: wa_bot_tool_chain_v1 - multiple custom tools and
+	// result-linked pipelines through the same privileged executor.
+	defs = append(defs, botToolChainDef())
+	// Coordination id: render_document_v1 - HTML -> PDF / 4:3 image, sent to the chat.
+	defs = append(defs, botRenderDocumentDef())
 	// Coordination id: campaign_tools_v1 - the campaign editor (/app/campanas)
 	// as one parameterised tool with the same propose+OK writes.
 	defs = append(defs, botToolDefsCampaign()...)
@@ -98,6 +103,8 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	// Coordination id: wa_bot_invoice_v1 - invoices (/app/facturas): draft,
 	// PDF to the chat, send to the client, with the panel's own handlers.
 	defs = append(defs, botToolDefsInvoice()...)
+	// Coordination id: special_date_whatsapp_only_v1 - «Reservas solo por WhatsApp».
+	defs = append(defs, botToolDefsSpecialDateWhatsAppOnly()...)
 	return defs
 }
 
@@ -338,10 +345,13 @@ func (s *Server) botAccessApplyNow(ctx context.Context, restaurantID int, a botA
 	if err != nil {
 		return "", errors.New("error interno")
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, restaurantID, string(raw)); err != nil {
+	`, `
+		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id) DO UPDATE SET config_json = EXCLUDED.config_json
+	`), restaurantID, string(raw)); err != nil {
 		return "", errors.New("error interno")
 	}
 	botServiceSessionReset(restaurantID)
@@ -404,7 +414,7 @@ func (s *Server) botConfigRaw(ctx context.Context, restaurantID int) string {
 		return ""
 	}
 	var current sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&current); err != nil {
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1`, `SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1`), restaurantID).Scan(&current); err != nil {
 		return ""
 	}
 	return current.String
@@ -474,7 +484,7 @@ func (s *Server) botAccessExecute(ctx context.Context, tx *sql.Tx, rid int, p bo
 		return "", errors.New("propuesta ilegible")
 	}
 	var current sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id=? FOR UPDATE`, rid).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, nativeSQL(`SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id=? FOR UPDATE`, `SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id=? FOR UPDATE`), rid).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", errors.New("error interno")
 	}
 	if p.Before != "" && p.Before != botSha(current.String) {
@@ -489,10 +499,13 @@ func (s *Server) botAccessExecute(ctx context.Context, tx *sql.Tx, rid int, p bo
 	if err != nil {
 		return "", errors.New("error interno")
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, rid, string(raw)); err != nil {
+	`, `
+		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id) DO UPDATE SET config_json = EXCLUDED.config_json
+	`), rid, string(raw)); err != nil {
 		return "", errors.New("error interno")
 	}
 	if err := tx.Commit(); err != nil {

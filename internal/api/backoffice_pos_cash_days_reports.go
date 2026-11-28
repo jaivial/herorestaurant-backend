@@ -56,7 +56,7 @@ func (s *Server) handleBOPOSCashDaysRange(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid date range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), posCashDaySelect+` WHERE d.restaurant_id=? AND d.business_date BETWEEN ? AND ? ORDER BY d.business_date ASC`, a.ActiveRestaurantID, dates[0], dates[len(dates)-1])
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(posCashDaySelectSQL()+` WHERE d.restaurant_id=? AND d.business_date BETWEEN ? AND ? ORDER BY d.business_date ASC`), a.ActiveRestaurantID, dates[0], dates[len(dates)-1])
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash days")
 		return
@@ -145,14 +145,21 @@ func (s *Server) handleBOPOSCashDayTables(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT v.id,v.table_id,COALESCE(rt.name,''),v.status,v.covers,v.channel,v.opened_at,v.closed_at,
 		       t.id,COALESCE(t.ticket_number,''),COALESCE(t.status,''),COALESCE(t.total_gross_cents,0),COALESCE(t.refunded_cents,0)
 		FROM pos_visits v
 		LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id
 		LEFT JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
 		WHERE v.restaurant_id=? AND v.service_date=?
-		ORDER BY COALESCE(rt.display_order,0),v.table_id,v.opened_at,v.id,t.id`, a.ActiveRestaurantID, date)
+		ORDER BY COALESCE(rt.display_order,0),v.table_id,v.opened_at,v.id,t.id`, `
+		SELECT v.id,v.table_id,COALESCE(rt.name,''),CAST(v.status AS text),v.covers,CAST(v.channel AS text),v.opened_at,v.closed_at,
+		       t.id,COALESCE(t.ticket_number,''),COALESCE(CAST(t.status AS text),''),COALESCE(t.total_gross_cents,0),COALESCE(t.refunded_cents,0)
+		FROM pos_visits v
+		LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id
+		LEFT JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
+		WHERE v.restaurant_id=? AND v.service_date=?
+		ORDER BY COALESCE(rt.display_order,0),v.table_id NULLS FIRST,v.opened_at,v.id,t.id`), a.ActiveRestaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading day tables")
 		return
@@ -269,7 +276,7 @@ func (s *Server) handleBOPOSCashDayTables(w http.ResponseWriter, r *http.Request
 // loadPOSCoverAdjustmentTotal sums the manual cover corrections of a day.
 func (s *Server) loadPOSCoverAdjustmentTotal(ctx context.Context, restaurantID int, date string) (int64, error) {
 	var total int64
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(delta_covers),0) FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date=?`, restaurantID, date).Scan(&total)
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(SUM(delta_covers),0) FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date=?`), restaurantID, date).Scan(&total)
 	return total, err
 }
 

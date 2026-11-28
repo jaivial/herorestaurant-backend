@@ -133,7 +133,7 @@ func botWSAdScheduleCheck(s *Server, ctx context.Context, rid int, p map[string]
 		otherStart, otherEnd time.Time
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND id <> ? AND starts_at IS NOT NULL AND ends_at IS NOT NULL AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at LIMIT 1`,
+		portableSQL(`SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND id <> ? AND starts_at IS NOT NULL AND ends_at IS NOT NULL AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at LIMIT 1`),
 		rid, adID, end, start).Scan(&otherID, &name, &otherStart, &otherEnd)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

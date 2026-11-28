@@ -80,11 +80,18 @@ func (s *Server) botHandleManualStaffMessage(ctx context.Context, restaurantID i
 	minutes := botHumanTakeoverMinutes(s.loadBotTenantConfig(ctx, restaurantID))
 	// One upsert: keeps the customer's push_name (the fromMe pushName is the
 	// restaurant's own name) and sets/clears the pause window.
-	if _, err := s.db.ExecContext(ctx, `
+	st := s.botStateDB()
+	q := `
 		INSERT INTO whatsapp_bot_sessions (restaurant_id, user_phone, push_name, last_message_at, bot_paused_until)
 		VALUES (?, ?, '', NOW(3), IF(? > 0, DATE_ADD(NOW(3), INTERVAL ? MINUTE), NULL))
 		ON DUPLICATE KEY UPDATE last_message_at = NOW(3), bot_paused_until = VALUES(bot_paused_until)
-	`, restaurantID, sender, minutes, minutes); err != nil && !isSQLSchemaError(err) {
+	`
+	if st.Postgres { // wa_bot_store_pg_mysql_v1
+		q = `INSERT INTO whatsapp_bot_sessions (restaurant_id, user_phone, push_name, last_message_at, bot_paused_until)
+		VALUES (?, ?, '', LOCALTIMESTAMP(3), CASE WHEN CAST(? AS integer) > 0 THEN LOCALTIMESTAMP(3) + make_interval(mins => CAST(? AS integer)) ELSE NULL END)
+		ON CONFLICT (restaurant_id, user_phone) DO UPDATE SET last_message_at = LOCALTIMESTAMP(3), bot_paused_until = EXCLUDED.bot_paused_until`
+	}
+	if _, err := st.ExecContext(ctx, selectedSQL(q), restaurantID, sender, minutes, minutes); /* q chosen by st.Postgres */ err != nil && !isSQLSchemaError(err) {
 		log.Printf("[bot] restaurant=%d pause session: %v", restaurantID, err)
 	}
 	botCheckpoint("wa_bot_human_takeover_started", "restaurant_id=%d sender=%s minutes=%d", restaurantID, sender, minutes)
@@ -94,9 +101,14 @@ func (s *Server) botHandleManualStaffMessage(ctx context.Context, restaurantID i
 // botIsPausedForHuman reports whether staff took over this conversation.
 func (s *Server) botIsPausedForHuman(ctx context.Context, restaurantID int, sender string) bool {
 	var paused int
-	err := s.db.QueryRowContext(ctx, `
+	st := s.botStateDB()
+	phoneEq := "user_phone = ?"
+	if st.Postgres { // padfk1: PAD-aware key, pgnative-B: app.norm on the raw PK columns
+		phoneEq = "app.norm(user_phone) = app.norm(?)"
+	}
+	err := st.QueryRowContext(ctx, selectedSQL(`
 		SELECT COUNT(*) FROM whatsapp_bot_sessions
-		WHERE restaurant_id = ? AND user_phone = ? AND bot_paused_until > NOW(3)
-	`, restaurantID, sender).Scan(&paused)
+		WHERE restaurant_id = ? AND `+phoneEq+` AND bot_paused_until > `+botSQLNow(st, 3)+`
+	`), restaurantID, sender).Scan(&paused)
 	return err == nil && paused > 0
 }

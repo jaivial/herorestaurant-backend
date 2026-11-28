@@ -126,9 +126,9 @@ func botPanelChangeToolDefs() []botToolDef {
 			Description: "PROPONE un cambio del panel de administración (una operación del backoffice) para aplicarlo desde el chat. NO lo aplica: guarda la propuesta exacta y envía la vista previa con un código; solo se aplica cuando la persona que lo pidió escribe 'OK <código>' en este chat. " +
 				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa (beverage_set, beverage_create, beverage_delete, weekday_set, booking_document_delete, media_upload, media_ai, editor_preview_set, table_position_set, ad_schedule_check, site_builder_call, assistant_tool, special_date_adelanto_set). " +
 				"Para cambiar el ADELANTO por persona de una FECHA ESPECIAL usa operation=special_date_adelanto_set con params {date, amount, special_date_menu_id y section_id opcionales para limitarlo}; no parchees las secciones del menú (ahí no se guarda el adelanto). " +
-				"Imágenes (media_upload / media_ai): la imagen es la que enviaron a ESTE chat (params.image_ref de la nota [Imagen disponible…]; vacío = la más reciente); nunca escribas data_base64. Kinds de menús y fechas especiales: special_menu (imagen principal; menu_id), special_section (menu_id + section_id), special_date_menu (menú personalizado de una fecha: devuelve la url para custom_image_url). " +
+				"Imágenes (media_upload / media_ai): la imagen es la que enviaron a ESTE chat (params.image_ref de la nota [Imagen disponible…]; vacío = la más reciente); nunca escribas data_base64. Kinds de menús y fechas especiales: special_menu (imagen principal; menu_id), special_section (menu_id + section_id), special_date_menu (menú personalizado de una fecha: devuelve la url para custom_image_url). Kinds de carta y menús: comida (tipo platos|bebidas|cafes + target_id), section_dish (menu_id + section_id + dish_id), menu_preview (menu_id), slider (menu_id), vino (target_id). " +
 				"path_params, query y body: los mismos argumentos que indica admin_describe; params: solo para operaciones directas. " +
-				"IMPORTANTE: propón UN cambio cada vez. Si el cambio depende de otro (por ejemplo, abrir un día y luego crear la reserva), espera a que el primero se aplique con OK y solo entonces propón el siguiente. " +
+				"IMPORTANTE: con propuestas, UN cambio cada vez; con cambios directos, agrupa varias operaciones independientes en tool_chain en vez de llamarme una vez por elemento. Si el cambio depende de otro (por ejemplo, abrir un día y luego crear la reserva), espera a que el primero se aplique con OK y solo entonces propón el siguiente. " +
 				"Las lecturas NO van por aquí: usa admin_call o staff_domain_read.",
 			InputSchema: botSchema(`{"type":"object","properties":{
 				"operation":{"type":"string","description":"Nombre de la operación del panel (admin_catalog) o directa"},
@@ -276,6 +276,11 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 		if err != nil {
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
+		if json.Valid([]byte(summary)) {
+			// Op-map writes already return their structured admin result. Keep it
+			// intact so tool_chain refs can reach fields such as data.item.num.
+			return summary, nil
+		}
 		return botJSON(map[string]any{"ok": true, "status": summary}), nil
 	}
 	preview := s.botPanelPreview(ctx, restaurantID, a)
@@ -340,15 +345,27 @@ func (s *Server) botPanelRunOp(ctx context.Context, rid int, a botPanelArgs) (st
 		return "", err
 	}
 	var res struct {
-		Status   int    `json:"status"`
-		OK       bool   `json:"ok"`
-		DataText string `json:"data_text"`
+		Status   int             `json:"status"`
+		OK       bool            `json:"ok"`
+		Data     json.RawMessage `json:"data"`
+		DataText string          `json:"data_text"`
+		Error    string          `json:"error"`
 	}
 	_ = json.Unmarshal([]byte(out), &res)
 	if !res.OK {
-		return "", fmt.Errorf("el panel no aplicó el cambio (status %d): %s", res.Status, res.DataText)
+		detail := res.Error
+		if detail == "" {
+			detail = res.DataText
+		}
+		if detail == "" {
+			detail = string(res.Data)
+		}
+		return "", fmt.Errorf("el panel no aplicó el cambio (status %d): %s", res.Status, detail)
 	}
-	return fmt.Sprintf("%s — aplicado por el panel (estado %d).", s.botPanelDesc(ctx, rid, a), res.Status), nil
+	// Return the actual operation result (including the created id), not only
+	// an HTTP status: later tool_chain steps can reference it and the model can
+	// verify exactly what was persisted.
+	return out, nil
 }
 
 // botPanelApplyNow performs the panel write itself, without the OK flow: only
@@ -386,7 +403,15 @@ func (s *Server) botPanelExecute(ctx context.Context, tx *sql.Tx, rid int, p bot
 		if err != nil {
 			return "", err
 		}
-		summary = "Aplicado: " + msg
+		// The approved flow answers a person, not another tool: never leak the
+		// raw admin JSON into WhatsApp. Direct writes still receive that JSON.
+		summary = fmt.Sprintf("Aplicado: %s.", s.botPanelDesc(ctx, rid, a))
+		var result struct {
+			Status int `json:"status"`
+		}
+		if json.Unmarshal([]byte(msg), &result) == nil && result.Status > 0 {
+			summary = fmt.Sprintf("Aplicado: %s (estado %d).", s.botPanelDesc(ctx, rid, a), result.Status)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", errors.New("error interno")

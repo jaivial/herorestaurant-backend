@@ -231,7 +231,7 @@ func validatePercentagesSum(percentages map[string]float64) bool {
 func (s *Server) resolveHourSplitEnabled(ctx context.Context, restaurantID int, date string) (bool, string, error) {
 	var enabled int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT enabled FROM hour_split_override WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1",
+		nativeSQL("SELECT enabled FROM hour_split_override WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT enabled FROM hour_split_override WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`),
 		restaurantID, date,
 	).Scan(&enabled)
 	if err == nil {
@@ -253,7 +253,7 @@ func (s *Server) resolveHourSplitEnabled(ctx context.Context, restaurantID int, 
 func (s *Server) loadHourPercentages(ctx context.Context, restaurantID int, date string, activeHours []string) (map[string]float64, bool, error) {
 	var raw sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		"SELECT hoursPercentages FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1",
+		nativeSQL("SELECT hoursPercentages FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "hoursPercentages" FROM hours_percentage WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`),
 		restaurantID, date,
 	).Scan(&raw)
 	if err != nil && err != sql.ErrNoRows {
@@ -267,6 +267,17 @@ func (s *Server) loadHourPercentages(ctx context.Context, restaurantID int, date
 		}
 	}
 
+	// Coordination id: hour_full_warning_v1 - dual system: a date without its
+	// own split follows the restaurant-wide template (Configuración > Reparto por
+	// hora) when that template covers every active hour; otherwise equal split.
+	if len(stored) == 0 {
+		if defaults, derr := s.loadReservationDefaults(ctx, restaurantID); derr == nil && len(defaults.DefaultHourPercentages) > 0 {
+			if tpl, _ := normalizePercentages(defaults.DefaultHourPercentages, activeHours); len(tpl) > 0 && validatePercentagesSum(tpl) {
+				return tpl, false, nil
+			}
+		}
+	}
+
 	normalized, synthesized := normalizePercentages(stored, activeHours)
 	return normalized, synthesized, nil
 }
@@ -276,7 +287,7 @@ func (s *Server) saveHourPercentages(ctx context.Context, restaurantID int, date
 
 	var exists int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT 1 FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1",
+		nativeSQL("SELECT 1 FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT 1 FROM hours_percentage WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`),
 		restaurantID, date,
 	).Scan(&exists)
 	if err != nil && err != sql.ErrNoRows {
@@ -284,13 +295,13 @@ func (s *Server) saveHourPercentages(ctx context.Context, restaurantID int, date
 	}
 	if err == sql.ErrNoRows {
 		_, err = s.db.ExecContext(ctx,
-			"INSERT INTO hours_percentage (restaurant_id, reservationDate, hoursPercentages) VALUES (?, ?, ?)",
+			nativeSQL("INSERT INTO hours_percentage (restaurant_id, reservationDate, hoursPercentages) VALUES (?, ?, ?)", `INSERT INTO hours_percentage (restaurant_id, "reservationDate", "hoursPercentages") VALUES (?, ?, ?)`),
 			restaurantID, date, string(payload),
 		)
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		"UPDATE hours_percentage SET hoursPercentages = ? WHERE restaurant_id = ? AND reservationDate = ?",
+		nativeSQL("UPDATE hours_percentage SET hoursPercentages = ? WHERE restaurant_id = ? AND reservationDate = ?", `UPDATE hours_percentage SET "hoursPercentages" = ? WHERE restaurant_id = ? AND "reservationDate" = ?`),
 		string(payload), restaurantID, date,
 	)
 	return err
@@ -301,17 +312,17 @@ func (s *Server) setHourSplitOverride(ctx context.Context, restaurantID int, dat
 	if enabled {
 		flag = 1
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO hour_split_override (restaurant_id, reservationDate, enabled)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)
-	`, restaurantID, date, flag)
+	`, `INSERT INTO hour_split_override (restaurant_id, "reservationDate", enabled) VALUES (?, ?, ?) ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET enabled = EXCLUDED.enabled`), restaurantID, date, flag)
 	return err
 }
 
 func (s *Server) clearHourSplitOverride(ctx context.Context, restaurantID int, date string) error {
 	_, err := s.db.ExecContext(ctx,
-		"DELETE FROM hour_split_override WHERE restaurant_id = ? AND reservationDate = ?",
+		nativeSQL("DELETE FROM hour_split_override WHERE restaurant_id = ? AND reservationDate = ?", `DELETE FROM hour_split_override WHERE restaurant_id = ? AND "reservationDate" = ?`),
 		restaurantID, date,
 	)
 	return err
@@ -526,7 +537,7 @@ func (s *Server) handleBOConfigHourSplitPercentagesSet(w http.ResponseWriter, r 
 func (s *Server) dailyLimitFor(r *http.Request, restaurantID int, date string) int {
 	dailyLimit := 0
 	_ = s.db.QueryRowContext(r.Context(),
-		"SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1",
+		nativeSQL("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1", `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? ORDER BY id DESC LIMIT 1`),
 		restaurantID, date,
 	).Scan(&dailyLimit)
 	if dailyLimit > 0 {

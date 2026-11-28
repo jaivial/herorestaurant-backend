@@ -28,12 +28,12 @@ type bookingExtra struct {
 }
 
 func (s *Server) loadRestaurantBookingExtras(restaurantID int) ([]bookingExtra, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.db.Query(portableSQL(`
 		SELECT id, slug, name, is_custom, active
 		FROM restaurant_booking_extras
 		WHERE restaurant_id = ? AND active = 1
 		ORDER BY is_custom ASC, id ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -65,32 +65,40 @@ func (s *Server) createRestaurantBookingExtra(restaurantID int, name string) (bo
 	if slug == "" {
 		return bookingExtra{}, sql.ErrNoRows
 	}
-	_, err := s.db.Exec(`
+	_, err := s.db.Exec(nativeSQL(`
 		INSERT INTO restaurant_booking_extras (restaurant_id, slug, name, is_custom, active)
 		VALUES (?, ?, ?, 1, 1)
 		ON DUPLICATE KEY UPDATE name = VALUES(name), active = 1
-	`, restaurantID, slug, name)
+	`, `
+		INSERT INTO restaurant_booking_extras (restaurant_id, slug, name, is_custom, active)
+		VALUES (?, ?, ?, 1, 1)
+		ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET name = EXCLUDED.name, active = 1
+	`), restaurantID, slug, name)
 	if err != nil {
 		return bookingExtra{}, err
 	}
 	var extra bookingExtra
 	var custom, active int
-	err = s.db.QueryRow(`
+	err = s.db.QueryRow(nativeSQL(`
 		SELECT id, slug, name, is_custom, active
 		FROM restaurant_booking_extras
 		WHERE restaurant_id = ? AND slug = ? LIMIT 1
-	`, restaurantID, slug).Scan(&extra.ID, &extra.Slug, &extra.Name, &custom, &active)
+	`, `
+		SELECT id, slug, name, is_custom, active
+		FROM restaurant_booking_extras
+		WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?) LIMIT 1
+	`), restaurantID, slug).Scan(&extra.ID, &extra.Slug, &extra.Name, &custom, &active)
 	extra.Custom = custom != 0
 	extra.Active = active != 0
 	return extra, err
 }
 
 func (s *Server) deleteRestaurantBookingExtra(restaurantID int, extraID int64) error {
-	_, err := s.db.Exec(`
+	_, err := s.db.Exec(portableSQL(`
 		UPDATE restaurant_booking_extras
 		SET active = 0
 		WHERE id = ? AND restaurant_id = ? AND is_custom = 1
-	`, extraID, restaurantID)
+	`), extraID, restaurantID)
 	return err
 }
 

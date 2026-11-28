@@ -12,11 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func (s *Server) handleBOProductionOrdersList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT o.id,r.name,o.produced_at,o.batches,o.standard_labour_cost,o.labour_cost_complete,o.actual_labour_minutes,o.actual_labour_cost,o.actual_labour_cost_complete FROM stock_production_orders o JOIN stock_recipes r ON r.restaurant_id=o.restaurant_id AND r.id=o.recipe_id WHERE o.restaurant_id=? AND o.status='CONFIRMED' ORDER BY o.produced_at DESC,o.id DESC LIMIT 100`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT o.id,r.name,o.produced_at,o.batches,o.standard_labour_cost,o.labour_cost_complete,o.actual_labour_minutes,o.actual_labour_cost,o.actual_labour_cost_complete FROM stock_production_orders o JOIN stock_recipes r ON r.restaurant_id=o.restaurant_id AND r.id=o.recipe_id WHERE o.restaurant_id=? AND o.status='CONFIRMED' ORDER BY o.produced_at DESC,o.id DESC LIMIT 100`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading production orders")
 		return
@@ -46,7 +47,12 @@ func (s *Server) handleBOProductionOrdersList(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleBOProductionLabourEntries(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT e.id,e.work_date,e.restaurant_member_id,TRIM(CONCAT(m.first_name,' ',m.last_name)),e.minutes_worked,COALESCE(SUM(a.minutes),0),e.minutes_worked-COALESCE(SUM(a.minutes),0) FROM member_time_entries e JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id LEFT JOIN member_time_allocations a ON a.restaurant_id=e.restaurant_id AND a.time_entry_id=e.id WHERE e.restaurant_id=? AND e.end_time IS NOT NULL AND e.work_date>=DATE_SUB(CURDATE(),INTERVAL 31 DAY) GROUP BY e.id,e.work_date,e.restaurant_member_id,m.first_name,m.last_name,e.minutes_worked HAVING e.minutes_worked-COALESCE(SUM(a.minutes),0)>0 ORDER BY e.work_date DESC,e.id DESC LIMIT 200`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT e.id,e.work_date,e.restaurant_member_id,TRIM(CONCAT(m.first_name,' ',m.last_name)),e.minutes_worked,COALESCE(SUM(a.minutes),0),e.minutes_worked-COALESCE(SUM(a.minutes),0) FROM member_time_entries e JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id LEFT JOIN member_time_allocations a ON a.restaurant_id=e.restaurant_id AND a.time_entry_id=e.id WHERE e.restaurant_id=? AND e.end_time IS NOT NULL AND e.work_date>=DATE_SUB(CURDATE(),INTERVAL 31 DAY) GROUP BY e.id,e.work_date,e.restaurant_member_id,m.first_name,m.last_name,e.minutes_worked HAVING e.minutes_worked-COALESCE(SUM(a.minutes),0)>0 ORDER BY e.work_date DESC,e.id DESC LIMIT 200`, `SELECT e.id,e.work_date,e.restaurant_member_id,TRIM(m.first_name || ' ' || m.last_name),e.minutes_worked,COALESCE(SUM(a.minutes),0),e.minutes_worked-COALESCE(SUM(a.minutes),0)
+		FROM member_time_entries e JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id
+		LEFT JOIN member_time_allocations a ON a.restaurant_id=e.restaurant_id AND a.time_entry_id=e.id
+		WHERE e.restaurant_id=? AND e.end_time IS NOT NULL AND e.work_date>=((date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')::date - 31)
+		GROUP BY e.id,e.work_date,e.restaurant_member_id,m.first_name,m.last_name,e.minutes_worked
+		HAVING e.minutes_worked-COALESCE(SUM(a.minutes),0)>0 ORDER BY e.work_date DESC,e.id DESC LIMIT 200`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading fichaje entries")
 		return
@@ -80,11 +86,11 @@ func (s *Server) refreshProductionActualLabour(ctx context.Context, tx *sql.Tx, 
 	var minutes int
 	var cost sql.NullFloat64
 	var incomplete int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(minutes),0),SUM(actual_cost),COALESCE(MAX(cost_complete=0),0) FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=?`, restaurantID, orderID).Scan(&minutes, &cost, &incomplete); err != nil {
+	if err := tx.QueryRowContext(ctx, nativeSQL(`SELECT COALESCE(SUM(minutes),0),SUM(actual_cost),COALESCE(MAX(cost_complete=0),0) FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=?`, `SELECT COALESCE(SUM(minutes),0),SUM(actual_cost),COALESCE(MAX(CASE WHEN cost_complete=0 THEN 1 ELSE 0 END),0) FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=?`), restaurantID, orderID).Scan(&minutes, &cost, &incomplete); err != nil {
 		return err
 	}
 	complete := minutes > 0 && incomplete == 0
-	_, err := tx.ExecContext(ctx, `UPDATE stock_production_orders SET actual_labour_minutes=?,actual_labour_cost=?,actual_labour_cost_complete=? WHERE restaurant_id=? AND id=?`, minutes, func() any {
+	_, err := tx.ExecContext(ctx, portableSQL(`UPDATE stock_production_orders SET actual_labour_minutes=?,actual_labour_cost=?,actual_labour_cost_complete=? WHERE restaurant_id=? AND id=?`), minutes, func() any {
 		if complete {
 			return cost.Float64
 		}
@@ -96,7 +102,7 @@ func (s *Server) refreshProductionActualLabour(ctx context.Context, tx *sql.Tx, 
 func (s *Server) handleBOProductionLabourList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	orderID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	rows, err := s.db.QueryContext(r.Context(), `SELECT a.id,a.time_entry_id,a.minutes,a.hourly_cost_snapshot,a.actual_cost,a.cost_complete,e.work_date,e.restaurant_member_id,TRIM(CONCAT(m.first_name,' ',m.last_name)) FROM member_time_allocations a JOIN member_time_entries e ON e.restaurant_id=a.restaurant_id AND e.id=a.time_entry_id JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id WHERE a.restaurant_id=? AND a.production_order_id=? ORDER BY e.work_date,a.id`, a.ActiveRestaurantID, orderID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT a.id,a.time_entry_id,a.minutes,a.hourly_cost_snapshot,a.actual_cost,a.cost_complete,e.work_date,e.restaurant_member_id,TRIM(CONCAT(m.first_name,' ',m.last_name)) FROM member_time_allocations a JOIN member_time_entries e ON e.restaurant_id=a.restaurant_id AND e.id=a.time_entry_id JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id WHERE a.restaurant_id=? AND a.production_order_id=? ORDER BY e.work_date,a.id`, `SELECT a.id,a.time_entry_id,a.minutes,a.hourly_cost_snapshot,a.actual_cost,a.cost_complete,e.work_date,e.restaurant_member_id,TRIM(m.first_name || ' ' || m.last_name) FROM member_time_allocations a JOIN member_time_entries e ON e.restaurant_id=a.restaurant_id AND e.id=a.time_entry_id JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id WHERE a.restaurant_id=? AND a.production_order_id=? ORDER BY e.work_date,a.id`), a.ActiveRestaurantID, orderID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading production labour")
 		return
@@ -123,7 +129,7 @@ func (s *Server) handleBOProductionLabourList(w http.ResponseWriter, r *http.Req
 	var actualMinutes int
 	var actualCost sql.NullFloat64
 	var complete int
-	if err = s.db.QueryRowContext(r.Context(), `SELECT actual_labour_minutes,actual_labour_cost,actual_labour_cost_complete FROM stock_production_orders WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, orderID).Scan(&actualMinutes, &actualCost, &complete); err != nil {
+	if err = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT actual_labour_minutes,actual_labour_cost,actual_labour_cost_complete FROM stock_production_orders WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, orderID).Scan(&actualMinutes, &actualCost, &complete); err != nil {
 		httpx.WriteError(w, 404, "Production order not found")
 		return
 	}
@@ -156,17 +162,17 @@ func (s *Server) handleBOProductionLabourCreate(w http.ResponseWriter, r *http.R
 	var entryMinutes int
 	var memberID int
 	var workDate string
-	if err = tx.QueryRowContext(r.Context(), `SELECT minutes_worked,restaurant_member_id,work_date FROM member_time_entries WHERE restaurant_id=? AND id=? AND end_time IS NOT NULL FOR UPDATE`, a.ActiveRestaurantID, in.TimeEntryID).Scan(&entryMinutes, &memberID, &workDate); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT minutes_worked,restaurant_member_id,work_date FROM member_time_entries WHERE restaurant_id=? AND id=? AND end_time IS NOT NULL FOR UPDATE`), a.ActiveRestaurantID, in.TimeEntryID).Scan(&entryMinutes, &memberID, &workDate); err != nil {
 		httpx.WriteError(w, 404, "Closed fichaje entry not found")
 		return
 	}
 	var order int
-	if err = tx.QueryRowContext(r.Context(), `SELECT 1 FROM stock_production_orders WHERE restaurant_id=? AND id=? AND status='CONFIRMED' FOR UPDATE`, a.ActiveRestaurantID, orderID).Scan(&order); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM stock_production_orders WHERE restaurant_id=? AND id=? AND status='CONFIRMED' FOR UPDATE`), a.ActiveRestaurantID, orderID).Scan(&order); err != nil {
 		httpx.WriteError(w, 404, "Production order not found")
 		return
 	}
 	var allocated int
-	if err = tx.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(minutes),0) FROM member_time_allocations WHERE restaurant_id=? AND time_entry_id=?`, a.ActiveRestaurantID, in.TimeEntryID).Scan(&allocated); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(SUM(minutes),0) FROM member_time_allocations WHERE restaurant_id=? AND time_entry_id=?`), a.ActiveRestaurantID, in.TimeEntryID).Scan(&allocated); err != nil {
 		httpx.WriteError(w, 500, "Error checking fichaje allocation")
 		return
 	}
@@ -177,7 +183,7 @@ func (s *Server) handleBOProductionLabourCreate(w http.ResponseWriter, r *http.R
 	var payType string
 	var gross, monthlyHours, burden sql.NullFloat64
 	rateComplete := true
-	err = tx.QueryRowContext(r.Context(), `SELECT pay_type,gross_amount,monthly_hours,employer_cost_pct FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL AND ? BETWEEN effective_from AND COALESCE(effective_to,'9999-12-31') LIMIT 1`, a.ActiveRestaurantID, memberID, workDate).Scan(&payType, &gross, &monthlyHours, &burden)
+	err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT pay_type,gross_amount,monthly_hours,employer_cost_pct FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL AND ? BETWEEN effective_from AND COALESCE(effective_to,'9999-12-31') LIMIT 1`), a.ActiveRestaurantID, memberID, workDate).Scan(&payType, &gross, &monthlyHours, &burden)
 	if errors.Is(err, sql.ErrNoRows) {
 		rateComplete = false
 	} else if err != nil {
@@ -194,9 +200,9 @@ func (s *Server) handleBOProductionLabourCreate(w http.ResponseWriter, r *http.R
 			actual = math.Round(value*float64(in.Minutes)/60*10000) / 10000
 		}
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO member_time_allocations (restaurant_id,time_entry_id,production_order_id,minutes,hourly_cost_snapshot,actual_cost,cost_complete,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, in.TimeEntryID, orderID, in.Minutes, hourly, actual, stockBoolInt(rateComplete), in.IdempotencyKey, a.User.ID)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO member_time_allocations (restaurant_id,time_entry_id,production_order_id,minutes,hourly_cost_snapshot,actual_cost,cost_complete,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, in.TimeEntryID, orderID, in.Minutes, hourly, actual, stockBoolInt(rateComplete), in.IdempotencyKey, a.User.ID)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		if sqldb.IsUniqueViolation(err) { // MySQL 1062 or SQLSTATE 23505 (uq_member_time_allocation_idempotency)
 			tx.Rollback()
 			httpx.WriteJSON(w, 200, map[string]any{"success": true, "duplicate": true})
 			return
@@ -204,8 +210,7 @@ func (s *Server) handleBOProductionLabourCreate(w http.ResponseWriter, r *http.R
 		httpx.WriteError(w, 500, "Error allocating production labour")
 		return
 	}
-	id, _ := res.LastInsertId()
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO member_time_allocation_audit (restaurant_id,allocation_id,action,snapshot,actor_user_id) VALUES (?,?,'CREATE',JSON_OBJECT('timeEntryId',?,'productionOrderId',?,'minutes',?,'costComplete',?),?)`, a.ActiveRestaurantID, id, in.TimeEntryID, orderID, in.Minutes, stockBoolInt(rateComplete), a.User.ID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO member_time_allocation_audit (restaurant_id,allocation_id,action,snapshot,actor_user_id) VALUES (?,?,'CREATE',JSON_OBJECT('timeEntryId',?,'productionOrderId',?,'minutes',?,'costComplete',?),?)`, `INSERT INTO member_time_allocation_audit (restaurant_id,allocation_id,action,snapshot,actor_user_id) VALUES (?,?,'CREATE',jsonb_build_object('timeEntryId',CAST(? AS bigint),'productionOrderId',CAST(? AS bigint),'minutes',CAST(? AS integer),'costComplete',CAST(? AS integer)),?)`), a.ActiveRestaurantID, id, in.TimeEntryID, orderID, in.Minutes, stockBoolInt(rateComplete), a.User.ID); err != nil {
 		httpx.WriteError(w, 500, "Error auditing production labour")
 		return
 	}
@@ -231,16 +236,16 @@ func (s *Server) handleBOProductionLabourDelete(w http.ResponseWriter, r *http.R
 	}
 	defer tx.Rollback()
 	var order int
-	if err = tx.QueryRowContext(r.Context(), `SELECT 1 FROM stock_production_orders WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, orderID).Scan(&order); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM stock_production_orders WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, orderID).Scan(&order); err != nil {
 		httpx.WriteError(w, 404, "Production order not found")
 		return
 	}
 	var snapshot string
-	if err = tx.QueryRowContext(r.Context(), `SELECT JSON_OBJECT('timeEntryId',time_entry_id,'productionOrderId',production_order_id,'minutes',minutes,'costComplete',cost_complete) FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, orderID, allocationID).Scan(&snapshot); err != nil {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT JSON_OBJECT('timeEntryId',time_entry_id,'productionOrderId',production_order_id,'minutes',minutes,'costComplete',cost_complete) FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=? AND id=? FOR UPDATE`, `SELECT jsonb_build_object('timeEntryId',time_entry_id,'productionOrderId',production_order_id,'minutes',minutes,'costComplete',cost_complete)::text FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, orderID, allocationID).Scan(&snapshot); err != nil {
 		httpx.WriteError(w, 404, "Production labour allocation not found")
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `DELETE FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=? AND id=?`, a.ActiveRestaurantID, orderID, allocationID)
+	res, err := tx.ExecContext(r.Context(), portableSQL(`DELETE FROM member_time_allocations WHERE restaurant_id=? AND production_order_id=? AND id=?`), a.ActiveRestaurantID, orderID, allocationID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error deleting production labour")
 		return
@@ -249,7 +254,7 @@ func (s *Server) handleBOProductionLabourDelete(w http.ResponseWriter, r *http.R
 		httpx.WriteError(w, 404, "Production labour allocation not found")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO member_time_allocation_audit (restaurant_id,allocation_id,action,snapshot,actor_user_id) VALUES (?,?,'DELETE',?,?)`, a.ActiveRestaurantID, allocationID, snapshot, a.User.ID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO member_time_allocation_audit (restaurant_id,allocation_id,action,snapshot,actor_user_id) VALUES (?,?,'DELETE',?,?)`, `INSERT INTO member_time_allocation_audit (restaurant_id,allocation_id,action,snapshot,actor_user_id) VALUES (?,?,'DELETE',CAST(? AS jsonb),?)`), a.ActiveRestaurantID, allocationID, snapshot, a.User.ID); err != nil {
 		httpx.WriteError(w, 500, "Error auditing production labour")
 		return
 	}

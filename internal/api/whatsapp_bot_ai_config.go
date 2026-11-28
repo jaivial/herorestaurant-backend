@@ -95,7 +95,7 @@ func botProviderKeyAAD(restaurantID int, provider string) string {
 // current production key keeps working with no migration step.
 func (s *Server) botProviderKey(ctx context.Context, restaurantID int, provider string) string {
 	var enc string
-	err := s.db.QueryRowContext(ctx, `SELECT api_key_encrypted FROM restaurant_ai_provider_keys WHERE restaurant_id = ? AND provider = ?`, restaurantID, provider).Scan(&enc)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT api_key_encrypted FROM restaurant_ai_provider_keys WHERE restaurant_id = ? AND provider = ?`, `SELECT api_key_encrypted FROM restaurant_ai_provider_keys WHERE restaurant_id = ? AND app.norm(provider) = app.norm(?)`), restaurantID, provider).Scan(&enc)
 	if err == nil && enc != "" {
 		plain, derr := vault.DecryptBound(s.cfg.VaultKey, botProviderKeyAAD(restaurantID, provider), enc)
 		if derr == nil && strings.TrimSpace(plain) != "" {
@@ -121,7 +121,7 @@ type botAIRouting struct {
 func (s *Server) loadBotAIRouting(ctx context.Context, restaurantID int) botAIRouting {
 	out := botAIRouting{PrimaryModel: botDefaultPrimaryModel, FallbackModel: botDefaultFallbackModel}
 	var primary, fallback, knowledge sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT primary_model, fallback_model, knowledge_json FROM restaurant_bot_ai_config WHERE restaurant_id = ?`, restaurantID).Scan(&primary, &fallback, &knowledge)
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT primary_model, fallback_model, knowledge_json FROM restaurant_bot_ai_config WHERE restaurant_id = ?`), restaurantID).Scan(&primary, &fallback, &knowledge)
 	if err != nil {
 		return out
 	}
@@ -216,8 +216,9 @@ func (s *Server) handleBOBotAIPut(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No se pudo cifrar la clave"})
 			return
 		}
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ai_provider_keys (restaurant_id, provider, api_key_encrypted) VALUES (?, ?, ?)
-			ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted)`, rid, provider, enc); err != nil {
+		if _, err := s.db.ExecContext(ctx, nativeSQL(`INSERT INTO restaurant_ai_provider_keys (restaurant_id, provider, api_key_encrypted) VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted)`, `INSERT INTO restaurant_ai_provider_keys (restaurant_id, provider, api_key_encrypted) VALUES (?, ?, ?)
+			ON CONFLICT (restaurant_id, provider) DO UPDATE SET api_key_encrypted = EXCLUDED.api_key_encrypted`), rid, provider, enc); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error guardando la clave"})
 			return
 		}
@@ -225,8 +226,9 @@ func (s *Server) handleBOBotAIPut(w http.ResponseWriter, r *http.Request) {
 	}
 	knowledge := botCleanKnowledge(req.Knowledge)
 	rawKnowledge, _ := json.Marshal(knowledge)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_bot_ai_config (restaurant_id, primary_model, fallback_model, knowledge_json) VALUES (?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE primary_model = VALUES(primary_model), fallback_model = VALUES(fallback_model), knowledge_json = VALUES(knowledge_json)`,
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`INSERT INTO restaurant_bot_ai_config (restaurant_id, primary_model, fallback_model, knowledge_json) VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE primary_model = VALUES(primary_model), fallback_model = VALUES(fallback_model), knowledge_json = VALUES(knowledge_json)`, `INSERT INTO restaurant_bot_ai_config (restaurant_id, primary_model, fallback_model, knowledge_json) VALUES (?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET primary_model = EXCLUDED.primary_model, fallback_model = EXCLUDED.fallback_model, knowledge_json = EXCLUDED.knowledge_json`),
 		rid, req.PrimaryModel, req.FallbackModel, string(rawKnowledge)); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error guardando la configuración"})
 		return

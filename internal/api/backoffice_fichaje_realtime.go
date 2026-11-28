@@ -14,7 +14,7 @@ import (
 // grouped by hour (0-23), plus the running total across the day.
 func (s *Server) posRevenueSnapshot(ctx context.Context, restaurantID int, date time.Time) (map[string]any, error) {
 	dateISO := date.Format("2006-01-02")
-	rows, err := s.db.QueryContext(ctx, `SELECT HOUR(t.opened_at),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY HOUR(t.opened_at)`, restaurantID, dateISO)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT HOUR(t.opened_at),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY HOUR(t.opened_at)`, `SELECT CAST(EXTRACT(HOUR FROM t.opened_at) AS integer),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY 1`), restaurantID, dateISO)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (s *Server) handleBOFichajeHourlyCosts(w http.ResponseWriter, r *http.Reque
 		httpx.WriteError(w, http.StatusBadRequest, "date invalido")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,CONCAT(m.first_name,' ',m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM restaurant_members m LEFT JOIN member_compensations c ON c.restaurant_id=m.restaurant_id AND c.restaurant_member_id=m.id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE m.restaurant_id=? AND m.is_active=1 ORDER BY m.last_name,m.first_name`, date.Format("2006-01-02"), a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT m.id,CONCAT(m.first_name,' ',m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM restaurant_members m LEFT JOIN member_compensations c ON c.restaurant_id=m.restaurant_id AND c.restaurant_member_id=m.id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE m.restaurant_id=? AND m.is_active=1 ORDER BY m.last_name,m.first_name`, `SELECT m.id,CONCAT(m.first_name,' ',m.last_name),CAST(c.pay_type AS text),c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM restaurant_members m LEFT JOIN member_compensations c ON c.restaurant_id=m.restaurant_id AND c.restaurant_member_id=m.id AND c.deleted_at IS NULL AND CAST(? AS date) BETWEEN c.effective_from AND COALESCE(c.effective_to,DATE '9999-12-31') WHERE m.restaurant_id=? AND m.is_active=1 ORDER BY m.last_name COLLATE "es-x-icu",m.first_name COLLATE "es-x-icu"`), date.Format("2006-01-02"), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando costes por hora")
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleBOPOSTicketsSeries(w http.ResponseWriter, r *http.Request
 
 	// Revenue by 5' bucket: open tickets grouped by the 5-minute bucket of
 	// their open time (net of refunds).
-	revRows, err := s.db.QueryContext(r.Context(), `SELECT TIME_FORMAT(SEC_TO_TIME(FLOOR(TIME_TO_SEC(TIME(t.opened_at))/300)*300),'%H:%i'),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY TIME_FORMAT(SEC_TO_TIME(FLOOR(TIME_TO_SEC(TIME(t.opened_at))/300)*300),'%H:%i')`, a.ActiveRestaurantID, dateISO)
+	revRows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT TIME_FORMAT(SEC_TO_TIME(FLOOR(TIME_TO_SEC(TIME(t.opened_at))/300)*300),'%H:%i'),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY TIME_FORMAT(SEC_TO_TIME(FLOOR(TIME_TO_SEC(TIME(t.opened_at))/300)*300),'%H:%i')`, `SELECT to_char(make_time(CAST(EXTRACT(HOUR FROM t.opened_at) AS integer), CAST(FLOOR(EXTRACT(MINUTE FROM t.opened_at)/5)*5 AS integer), 0),'HH24:MI'),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY 1`), a.ActiveRestaurantID, dateISO)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando serie de ingresos")
 		return
@@ -146,7 +146,7 @@ func (s *Server) handleBOPOSTicketsSeries(w http.ResponseWriter, r *http.Request
 	revRows.Close()
 
 	// Labour cost per hour for the day from persisted time entries.
-	costRows, err := s.db.QueryContext(r.Context(), `SELECT LPAD(HOUR(e.start_time),2,'0'),COALESCE(SUM(e.minutes_worked/60*(CASE c.pay_type WHEN 'MONTHLY' THEN c.gross_amount/c.monthly_hours ELSE c.gross_amount END)*(1+c.employer_cost_pct/100)),0) FROM member_time_entries e LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE e.restaurant_id=? AND e.work_date=? GROUP BY LPAD(HOUR(e.start_time),2,'0')`, a.ActiveRestaurantID, dateISO)
+	costRows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT LPAD(HOUR(e.start_time),2,'0'),COALESCE(SUM(e.minutes_worked/60*(CASE c.pay_type WHEN 'MONTHLY' THEN c.gross_amount/c.monthly_hours ELSE c.gross_amount END)*(1+c.employer_cost_pct/100)),0) FROM member_time_entries e LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE e.restaurant_id=? AND e.work_date=? GROUP BY LPAD(HOUR(e.start_time),2,'0')`, `SELECT LPAD(CAST(CAST(EXTRACT(HOUR FROM e.start_time) AS integer) AS text),2,'0'),COALESCE(SUM(ROUND(CAST(e.minutes_worked AS numeric)/60,4)*(CASE c.pay_type WHEN 'MONTHLY' THEN ROUND(c.gross_amount/c.monthly_hours,6) ELSE c.gross_amount END)*(1+ROUND(c.employer_cost_pct/100,6))),0) FROM member_time_entries e LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,DATE '9999-12-31') WHERE e.restaurant_id=? AND e.work_date=? GROUP BY 1`), a.ActiveRestaurantID, dateISO)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando serie de coste")
 		return

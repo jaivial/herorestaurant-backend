@@ -58,12 +58,12 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 
 	var hoursRaw sql.NullString
 	var modeRaw sql.NullString
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT hoursarray, opening_mode
 		FROM openinghours
 		WHERE restaurant_id = ? AND dateselected = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(&hoursRaw, &modeRaw)
+	`), restaurantID, date).Scan(&hoursRaw, &modeRaw)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando openinghours")
 		return
@@ -243,12 +243,17 @@ func (s *Server) handlePublicMandatoryMenus(w http.ResponseWriter, r *http.Reque
 	var statusInt, mandatoryInt int
 	var menuIDRaw, menuChooseMainRaw sql.NullString
 
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT id, status, mandatory, menu_id, menu_choose_main
 		FROM mandatory_menus
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(&id, &statusInt, &mandatoryInt, &menuIDRaw, &menuChooseMainRaw)
+	`, `
+		SELECT id, status, mandatory, menu_id, CAST(menu_choose_main AS text)
+		FROM mandatory_menus
+		WHERE restaurant_id = ? AND date = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(&id, &statusInt, &mandatoryInt, &menuIDRaw, &menuChooseMainRaw)
 
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -336,7 +341,7 @@ func (s *Server) fetchMandatoryMenusDetails(ctx context.Context, restaurantID in
 		WHERE restaurant_id = ? AND id IN (` + strings.Join(placeholders, ",") + `) AND active = 1 AND is_draft = 0
 	`
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), args...)
 	if err != nil {
 		return nil, err
 	}

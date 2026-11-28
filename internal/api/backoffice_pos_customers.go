@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 	"time"
@@ -81,7 +82,7 @@ func (in *posCustomerInput) normalise() string {
 func (s *Server) posCustomerConflict(w http.ResponseWriter, r *http.Request, restaurantID int, in posCustomerInput, exceptID int64) bool {
 	var id int64
 	var name string
-	err := s.db.QueryRowContext(r.Context(), `SELECT id,display_name FROM pos_customers WHERE restaurant_id=? AND id<>? AND anonymised_at IS NULL AND ((? <> '' AND phone=?) OR (? <> '' AND email=?)) LIMIT 1`, restaurantID, exceptID, in.Phone, in.Phone, in.Email, in.Email).Scan(&id, &name)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id,display_name FROM pos_customers WHERE restaurant_id=? AND id<>? AND anonymised_at IS NULL AND ((? <> '' AND phone=?) OR (? <> '' AND email=?)) LIMIT 1`, `SELECT id,display_name FROM pos_customers WHERE restaurant_id=? AND id<>? AND anonymised_at IS NULL AND ((CAST(? AS text) <> '' AND app.norm(phone) = app.norm(?)) OR (CAST(? AS text) <> '' AND app.norm_ascii(email) = app.norm_ascii(?))) LIMIT 1`), restaurantID, exceptID, in.Phone, in.Phone, in.Email, in.Email).Scan(&id, &name)
 	if err != nil {
 		return false
 	}
@@ -99,19 +100,24 @@ func (s *Server) handleBOPOSCustomersSearch(w http.ResponseWriter, r *http.Reque
 	args := []any{a.ActiveRestaurantID}
 	where := "c.restaurant_id=? AND c.anonymised_at IS NULL"
 	if q != "" {
-		where += " AND (c.display_name LIKE ? OR c.email LIKE ? OR c.tax_id LIKE ?"
+		// PG17 cannot LIKE on old-nondeterministic-collation: LOWER(col) COLLATE C with a lowered pattern
+		// (backslash stays the escape char on both). Accent/PAD gap open.
+		where += sqlFragment(" AND (c.display_name LIKE ? OR c.email LIKE ? OR c.tax_id LIKE ?", ` AND (LOWER(c.display_name) COLLATE "C" LIKE ? OR LOWER(c.email) COLLATE "C" LIKE ? OR LOWER(c.tax_id) COLLATE "C" LIKE ?`)
 		like := "%" + strings.NewReplacer("%", "\\%", "_", "\\_").Replace(q) + "%"
+		if sqlDialect == sqldb.Postgres {
+			like = strings.ToLower(like)
+		}
 		args = append(args, like, like, like)
 		if len(digits) >= 3 {
-			where += " OR c.phone LIKE ?"
+			where += sqlFragment(" OR c.phone LIKE ?", ` OR c.phone COLLATE "C" LIKE ?`)
 			args = append(args, "%"+digits+"%")
 		}
 		where += ")"
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT c.id,c.display_name,COALESCE(c.phone,''),COALESCE(c.email,''),COALESCE(c.tax_id,''),
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT c.id,c.display_name,COALESCE(c.phone,''),COALESCE(c.email,''),COALESCE(c.tax_id,''),
 		(SELECT COUNT(DISTINCT t.visit_id) FROM pos_tickets t WHERE t.restaurant_id=c.restaurant_id AND t.customer_id=c.id AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')),
 		(SELECT MAX(t.paid_at) FROM pos_tickets t WHERE t.restaurant_id=c.restaurant_id AND t.customer_id=c.id AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED'))
-		FROM pos_customers c WHERE `+where+` ORDER BY c.updated_at DESC LIMIT 20`, args...)
+		FROM pos_customers c WHERE `+where+` ORDER BY c.updated_at DESC LIMIT 20`), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error searching customers")
 		return
@@ -150,7 +156,7 @@ func (s *Server) handleBOPOSCustomerCreate(w http.ResponseWriter, r *http.Reques
 	if s.posCustomerConflict(w, r, a.ActiveRestaurantID, in, 0) {
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_customers (restaurant_id,display_name,phone,email,tax_id,notes,created_by) VALUES (?,?,?,?,?,?,?)`, a.ActiveRestaurantID, in.DisplayName, nullIfEmpty(in.Phone), nullIfEmpty(in.Email), nullIfEmpty(in.TaxID), nullIfEmpty(in.Notes), a.User.ID)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_customers (restaurant_id,display_name,phone,email,tax_id,notes,created_by) VALUES (?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, in.DisplayName, nullIfEmpty(in.Phone), nullIfEmpty(in.Email), nullIfEmpty(in.TaxID), nullIfEmpty(in.Notes), a.User.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") && s.posCustomerConflict(w, r, a.ActiveRestaurantID, in, 0) {
 			return
@@ -158,8 +164,7 @@ func (s *Server) handleBOPOSCustomerCreate(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating customer")
 		return
 	}
-	id, _ := res.LastInsertId()
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,actor_user_id) VALUES (?,'customer',?,'CREATE',?)`, a.ActiveRestaurantID, id, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,actor_user_id) VALUES (?,'customer',?,'CREATE',?)`), a.ActiveRestaurantID, id, a.User.ID)
 	s.writePOSCustomer(w, r, a.ActiveRestaurantID, id, http.StatusCreated)
 }
 
@@ -178,14 +183,14 @@ func (s *Server) handleBOPOSCustomerPatch(w http.ResponseWriter, r *http.Request
 	if s.posCustomerConflict(w, r, a.ActiveRestaurantID, in, id) {
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_customers SET display_name=?,phone=?,email=?,tax_id=?,notes=? WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`, in.DisplayName, nullIfEmpty(in.Phone), nullIfEmpty(in.Email), nullIfEmpty(in.TaxID), nullIfEmpty(in.Notes), a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_customers SET display_name=?,phone=?,email=?,tax_id=?,notes=? WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`), []any{in.DisplayName, nullIfEmpty(in.Phone), nullIfEmpty(in.Email), nullIfEmpty(in.TaxID), nullIfEmpty(in.Notes), a.ActiveRestaurantID, id}...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving customer")
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var exists int
-		if s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_customers WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`, a.ActiveRestaurantID, id).Scan(&exists) != nil {
+		if s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_customers WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`), a.ActiveRestaurantID, id).Scan(&exists) != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Customer not found")
 			return
 		}
@@ -199,7 +204,7 @@ func (s *Server) handleBOPOSCustomerPatch(w http.ResponseWriter, r *http.Request
 func (s *Server) handleBOPOSCustomerAnonymise(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_customers SET display_name='Cliente anonimizado',phone=NULL,email=NULL,tax_id=NULL,notes=NULL,anonymised_at=NOW() WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`, a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`UPDATE pos_customers SET display_name='Cliente anonimizado',phone=NULL,email=NULL,tax_id=NULL,notes=NULL,anonymised_at=NOW() WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`, `UPDATE pos_customers SET display_name='Cliente anonimizado',phone=NULL,email=NULL,tax_id=NULL,notes=NULL,anonymised_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error anonymising customer")
 		return
@@ -208,7 +213,7 @@ func (s *Server) handleBOPOSCustomerAnonymise(w http.ResponseWriter, r *http.Req
 		httpx.WriteError(w, http.StatusNotFound, "Customer not found")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,actor_user_id) VALUES (?,'customer',?,'ANONYMISE',?)`, a.ActiveRestaurantID, id, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,actor_user_id) VALUES (?,'customer',?,'ANONYMISE',?)`), a.ActiveRestaurantID, id, a.User.ID)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -238,14 +243,14 @@ func (s *Server) loadPOSCustomerProfile(ctx context.Context, restaurantID int, i
 	var name, phone, email, taxID, notes string
 	var createdAt time.Time
 	var anonymised sql.NullTime
-	if err := s.db.QueryRowContext(ctx, `SELECT display_name,COALESCE(phone,''),COALESCE(email,''),COALESCE(tax_id,''),COALESCE(notes,''),created_at,anonymised_at FROM pos_customers WHERE restaurant_id=? AND id=?`, restaurantID, id).Scan(&name, &phone, &email, &taxID, &notes, &createdAt, &anonymised); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT display_name,COALESCE(phone,''),COALESCE(email,''),COALESCE(tax_id,''),COALESCE(notes,''),created_at,anonymised_at FROM pos_customers WHERE restaurant_id=? AND id=?`), restaurantID, id).Scan(&name, &phone, &email, &taxID, &notes, &createdAt, &anonymised); err != nil {
 		return nil, err
 	}
 	out := map[string]any{"id": id, "displayName": name, "phone": phone, "email": email, "taxId": taxID, "notes": notes, "createdAt": createdAt, "anonymised": anonymised.Valid}
 	var visits, checks int
 	var spent int64
 	var first, last sql.NullTime
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT visit_id),COUNT(*),COALESCE(SUM(total_gross_cents-refunded_cents),0),MIN(paid_at),MAX(paid_at) FROM pos_tickets WHERE restaurant_id=? AND customer_id=? AND status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')`, restaurantID, id).Scan(&visits, &checks, &spent, &first, &last); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(DISTINCT visit_id),COUNT(*),COALESCE(SUM(total_gross_cents-refunded_cents),0),MIN(paid_at),MAX(paid_at) FROM pos_tickets WHERE restaurant_id=? AND customer_id=? AND status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')`), restaurantID, id).Scan(&visits, &checks, &spent, &first, &last); err != nil {
 		return nil, err
 	}
 	stats := map[string]any{"visits": visits, "checks": checks, "spentCents": spent, "averageCheckCents": int64(0), "firstVisitAt": nil, "lastVisitAt": nil}
@@ -259,7 +264,7 @@ func (s *Server) loadPOSCustomerProfile(ctx context.Context, restaurantID int, i
 	out["stats"] = stats
 	// What they usually order: by quantity across paid checks, menus counted as
 	// the menu (components are part of it, not separate orders).
-	favRows, err := s.db.QueryContext(ctx, `SELECT l.product_name_snapshot,SUM(l.quantity) q FROM pos_ticket_lines l JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id WHERE l.restaurant_id=? AND t.customer_id=? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') AND l.status='ACTIVE' AND l.parent_line_id IS NULL GROUP BY l.product_name_snapshot ORDER BY q DESC,l.product_name_snapshot LIMIT 5`, restaurantID, id)
+	favRows, err := s.db.QueryContext(ctx, portableSQL(`SELECT l.product_name_snapshot,SUM(l.quantity) q FROM pos_ticket_lines l JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id WHERE l.restaurant_id=? AND t.customer_id=? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') AND l.status='ACTIVE' AND l.parent_line_id IS NULL GROUP BY l.product_name_snapshot ORDER BY q DESC,l.product_name_snapshot LIMIT 5`), restaurantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +280,7 @@ func (s *Server) loadPOSCustomerProfile(ctx context.Context, restaurantID int, i
 	}
 	favRows.Close()
 	out["favourites"] = favourites
-	histRows, err := s.db.QueryContext(ctx, `SELECT t.id,t.ticket_number,t.status,t.total_gross_cents,t.refunded_cents,t.paid_at,v.service_date,COALESCE(rt.name,'') FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND t.customer_id=? AND t.status<>'VOIDED' ORDER BY t.id DESC LIMIT 10`, restaurantID, id)
+	histRows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT t.id,t.ticket_number,t.status,t.total_gross_cents,t.refunded_cents,t.paid_at,v.service_date,COALESCE(rt.name,'') FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND t.customer_id=? AND t.status<>'VOIDED' ORDER BY t.id DESC LIMIT 10`, `SELECT t.id,t.ticket_number,CAST(t.status AS text),t.total_gross_cents,t.refunded_cents,t.paid_at,v.service_date,COALESCE(rt.name,'') FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND t.customer_id=? AND t.status<>'VOIDED' ORDER BY t.id DESC LIMIT 10`), restaurantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -316,25 +321,25 @@ func (s *Server) handleBOPOSTicketCustomer(w http.ResponseWriter, r *http.Reques
 	var customer any
 	if in.CustomerID > 0 {
 		var ok int
-		if s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_customers WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`, a.ActiveRestaurantID, in.CustomerID).Scan(&ok) != nil {
+		if s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_customers WHERE restaurant_id=? AND id=? AND anonymised_at IS NULL`), a.ActiveRestaurantID, in.CustomerID).Scan(&ok) != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Customer not found")
 			return
 		}
 		customer = in.CustomerID
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_tickets SET customer_id=? WHERE restaurant_id=? AND id=? AND status<>'VOIDED'`, customer, a.ActiveRestaurantID, ticketID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_tickets SET customer_id=? WHERE restaurant_id=? AND id=? AND status<>'VOIDED'`), customer, a.ActiveRestaurantID, ticketID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error linking customer")
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var exists int
-		if s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_tickets WHERE restaurant_id=? AND id=? AND status<>'VOIDED'`, a.ActiveRestaurantID, ticketID).Scan(&exists) != nil {
+		if s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_tickets WHERE restaurant_id=? AND id=? AND status<>'VOIDED'`), a.ActiveRestaurantID, ticketID).Scan(&exists) != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Ticket not found")
 			return
 		}
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CUSTOMER_LINK',JSON_OBJECT('customerId',?),?)`, a.ActiveRestaurantID, ticketID, in.CustomerID, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CUSTOMER_LINK',JSON_OBJECT('customerId',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CUSTOMER_LINK',jsonb_build_object('customerId',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, ticketID, in.CustomerID, a.User.ID)
 	ticket, err := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")

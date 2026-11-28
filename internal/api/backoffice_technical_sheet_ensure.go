@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // handleBOTechnicalSheetEnsureForProduct returns the technical sheet for a
@@ -38,17 +39,22 @@ func (s *Server) handleBOTechnicalSheetEnsureForProduct(w http.ResponseWriter, r
 	// product by the id the caller sent. Wine addresses its rows by the legacy
 	// num, so the catalogue id is resolved through legacy_wine_map and the
 	// restaurant id is repeated inside the subquery.
+	// pgTable/pgCond are the PG twins: POSTRES and NUM keep their source case
+	// and must be quoted on PostgreSQL (sqldb_native_pg_v1).
 	table := "comida_items"
 	sourceIDCond := "id=?"
+	pgTable, pgCond := table, sourceIDCond
 	sourceIDArgs := func() []any { return []any{in.ItemID} }
 	switch source {
 	case "vinos":
 		table = "group_menu_wines_v2"
 		sourceIDCond = "id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?)"
+		pgTable, pgCond = table, sourceIDCond
 		sourceIDArgs = func() []any { return []any{a.ActiveRestaurantID, in.ItemID} }
 	case "postres":
 		table = "POSTRES"
 		sourceIDCond = "NUM=?"
+		pgTable, pgCond = `"POSTRES"`, `"NUM"=?`
 	}
 
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -63,7 +69,8 @@ func (s *Server) handleBOTechnicalSheetEnsureForProduct(w http.ResponseWriter, r
 	// Table and column come from the fixed mapping above, never from user input.
 	var existing sql.NullInt64
 	if err := tx.QueryRowContext(r.Context(),
-		fmt.Sprintf(`SELECT stock_recipe_id FROM %s WHERE restaurant_id=? AND %s FOR UPDATE`, table, sourceIDCond),
+		nativeSQL(fmt.Sprintf(`SELECT stock_recipe_id FROM %s WHERE restaurant_id=? AND %s FOR UPDATE`, table, sourceIDCond),
+			fmt.Sprintf(`SELECT stock_recipe_id FROM %s WHERE restaurant_id=? AND %s FOR UPDATE`, pgTable, pgCond)),
 		append([]any{a.ActiveRestaurantID}, sourceIDArgs()...)...).Scan(&existing); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "Producto no encontrado")
@@ -96,37 +103,36 @@ func (s *Server) handleBOTechnicalSheetEnsureForProduct(w http.ResponseWriter, r
 
 	// D4: the output item, its unit and the recipe are created together, so a
 	// failure cannot leave a half-built sheet behind.
-	itemRes, err := tx.ExecContext(r.Context(), `
+	outputItemID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 		INSERT INTO stock_items (restaurant_id,name,kind,base_dimension,base_unit,is_tracked,deduction_source)
-		VALUES (?,?,'SEMI_FINISHED','COUNT','ud',1,'SALE')`, a.ActiveRestaurantID, name)
+		VALUES (?,?,'SEMI_FINISHED','COUNT','ud',1,'SALE')`), "id", a.ActiveRestaurantID, name)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando el articulo de salida")
 		return
 	}
-	outputItemID, _ := itemRes.LastInsertId()
 
-	if _, err = tx.ExecContext(r.Context(), `
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`
 		INSERT INTO stock_item_units (restaurant_id,stock_item_id,code,label,factor_to_base,is_default_display,can_recipe,can_count)
-		VALUES (?,?,'ud','ud',1,1,1,1)`, a.ActiveRestaurantID, outputItemID); err != nil {
+		VALUES (?,?,'ud','ud',1,1,1,1)`), a.ActiveRestaurantID, outputItemID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando la unidad de salida")
 		return
 	}
 
-	recipeRes, err := tx.ExecContext(r.Context(), `
+	sheetID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 		INSERT INTO stock_recipes (restaurant_id,name,output_item_id,output_qty_base,waste_pct,portions,status,is_active,draft_owner_user_id)
-		VALUES (?,?,?,1,0,1,'DRAFT',1,?)`,
-		a.ActiveRestaurantID, name, outputItemID, a.User.ID)
+		VALUES (?,?,?,1,0,1,'DRAFT',1,?)`), "id", a.ActiveRestaurantID, name, outputItemID, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando la ficha tecnica")
 		return
 	}
-	sheetID, _ := recipeRes.LastInsertId()
 
 	// Linking inside the same transaction is what stops the sheet becoming an
 	// orphan if anything after this fails.
 	if _, err = tx.ExecContext(r.Context(),
-		fmt.Sprintf(`UPDATE %s SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
+		nativeSQL(fmt.Sprintf(`UPDATE %s SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
 			 WHERE restaurant_id=? AND %s`, table, sourceIDCond),
+			fmt.Sprintf(`UPDATE %s SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
+			 WHERE restaurant_id=? AND %s`, pgTable, pgCond)),
 		append([]any{sheetID, outputItemID, a.ActiveRestaurantID}, sourceIDArgs()...)...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error vinculando la ficha tecnica")
 		return

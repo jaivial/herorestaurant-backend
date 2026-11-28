@@ -21,6 +21,7 @@ import (
 	"preactvillacarmen/internal/config"
 	appdb "preactvillacarmen/internal/db"
 	"preactvillacarmen/internal/db/migrations"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func main() {
@@ -34,23 +35,27 @@ func main() {
 	flag.Parse()
 
 	cfg := config.Load()
-	db, err := appdb.OpenMySQL(cfg.MySQL)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// db_dialect_selection_v1: MySQL unchanged (OpenMySQL); PG gated by
+	// OpenBusinessForTool. On PG only --list runs (metadata, never a secret):
+	// issuing or revoking credentials is refused until runtime QA.
+	db, d, err := appdb.OpenBusinessForTool(ctx, cfg)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer db.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	dialect = d
+	if dialect == sqldb.Postgres && !*list {
+		log.Fatal("chatgpt-plugin-token: on PostgreSQL only --list is allowed until runtime QA (no token issued or revoked)")
+	}
 	// SKIP_MIGRATIONS=1 lets the generator run against an already-migrated
-	// database, matching cmd/server.
-	if os.Getenv("SKIP_MIGRATIONS") != "1" {
+	// database, matching cmd/server. Never on PG (schema = import plan).
+	if dialect != sqldb.Postgres && os.Getenv("SKIP_MIGRATIONS") != "1" {
 		if err := migrations.Apply(ctx, db); err != nil {
 			log.Fatalf("Failed to apply migrations: %v", err)
 		}
 	}
-
-	server := api.NewPluginTokenService(db)
 
 	switch {
 	case *list:
@@ -58,6 +63,7 @@ func main() {
 			log.Fatalf("Failed to list tokens: %v", err)
 		}
 	case *revoke:
+		server := api.NewPluginTokenService(db)
 		n, err := server.Revoke(ctx, *userID, *restaurantID)
 		if err != nil {
 			log.Fatalf("Failed to revoke tokens: %v", err)
@@ -71,6 +77,7 @@ func main() {
 		if *userID <= 0 || *restaurantID <= 0 {
 			log.Fatal("--user and --restaurant are required (use --list, --revoke or --help)")
 		}
+		server := api.NewPluginTokenService(db)
 		token, err := server.Issue(ctx, *userID, *restaurantID, *label)
 		if err != nil {
 			log.Fatalf("Failed to issue token: %v", err)
@@ -105,7 +112,15 @@ func listTokens(ctx context.Context, db *sql.DB, userID, restaurantID int) error
 		WHERE (? = 0 OR t.user_id = ?) AND (? = 0 OR t.restaurant_id = ?)
 		ORDER BY t.id DESC
 	`
-	rows, err := db.QueryContext(ctx, q, userID, userID, restaurantID, restaurantID)
+	// Same text on both (CAST keeps the PG param typed); rebound once. PG
+	// timestamptz renders in the pinned UTC session, display only.
+	rows, err := db.QueryContext(ctx, nativeSQL(q, `
+		SELECT t.id, t.user_id, t.restaurant_id, COALESCE(t.label, ''), CAST(t.created_at AS text),
+		       CAST(t.last_used_at AS text), CAST(t.revoked_at AS text)
+		FROM chatgpt_plugin_tokens t
+		WHERE (CAST(? AS integer) = 0 OR t.user_id = ?) AND (CAST(? AS integer) = 0 OR t.restaurant_id = ?)
+		ORDER BY t.id DESC
+	`), userID, userID, restaurantID, restaurantID)
 	if err != nil {
 		return err
 	}

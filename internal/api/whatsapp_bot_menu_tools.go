@@ -82,7 +82,7 @@ func botMenuBeverageSettings(raw string) map[string]any {
 
 // botToolListMenus returns the active bookable menus grouped by category type.
 func (s *Server) botToolListMenus(ctx context.Context, restaurantID int) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, menu_title, COALESCE(menu_type, 1),
 		       COALESCE(price, ''), COALESCE(menu_subtitle, '')
 		FROM menus
@@ -96,7 +96,21 @@ func (s *Server) botToolListMenus(ctx context.Context, restaurantID int) (string
 		    WHEN 4 THEN 4
 		    WHEN 6 THEN 5 ELSE 9 END ASC,
 		  modified_at DESC, id DESC
-	`, restaurantID)
+	`, `
+		SELECT id, menu_title, COALESCE(menu_type, 1),
+		       COALESCE(CAST(price AS text), ''), COALESCE(menu_subtitle, '')
+		FROM menus
+		WHERE restaurant_id = ? AND active = 1 AND is_draft = 0
+		  AND COALESCE(menu_type, 1) IN (1,2,3,4,6)
+		ORDER BY
+		  CASE COALESCE(menu_type, 1)
+		    WHEN 1 THEN 1
+		    WHEN 3 THEN 2
+		    WHEN 2 THEN 3
+		    WHEN 4 THEN 4
+		    WHEN 6 THEN 5 ELSE 9 END ASC,
+		  modified_at DESC NULLS LAST, id DESC
+	`), restaurantID)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando los menús"}), nil
 	}
@@ -169,7 +183,7 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 		minPartySize, mainLimitNum              int
 		mainLimit, includedCoffee               int
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT menu_title, COALESCE(menu_type, 1),
 		       COALESCE(price, ''), COALESCE(menu_subtitle, ''),
 		       COALESCE(entrantes, ''), COALESCE(principales, ''), COALESCE(postre, ''),
@@ -179,7 +193,17 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 		FROM menus
 		WHERE restaurant_id = ? AND id = ? AND active = 1 AND is_draft = 0
 		LIMIT 1
-	`, restaurantID, menuID).Scan(
+	`, `
+		SELECT menu_title, COALESCE(menu_type, 1),
+		       COALESCE(CAST(price AS text), ''), COALESCE(menu_subtitle, ''),
+		       COALESCE(entrantes, ''), COALESCE(principales, ''), COALESCE(postre, ''),
+		       COALESCE(beverage, ''), COALESCE(comments, ''),
+		       COALESCE(min_party_size, 0), COALESCE(main_dishes_limit, 0),
+		       COALESCE(main_dishes_limit_number, 0), COALESCE(included_coffee, 0)
+		FROM menus
+		WHERE restaurant_id = ? AND id = ? AND active = 1 AND is_draft = 0
+		LIMIT 1
+	`), restaurantID, menuID).Scan(
 		&title, &menuType, &price, &subtitleRaw,
 		&entrantesRaw, &principalesRaw, &postreRaw,
 		&beverageRaw, &commentsRaw,
@@ -272,12 +296,12 @@ func botWeekdaysAvailable(weekdays map[string]bool) []string {
 
 // botLoadMenuSections loads the v2 sections and their active dishes for a menu.
 func (s *Server) botLoadMenuSections(ctx context.Context, restaurantID int, menuID int64) []map[string]any {
-	sectionRows, err := s.db.QueryContext(ctx, `
+	sectionRows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, title, section_kind, position
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
-	`, restaurantID, menuID)
+	`), restaurantID, menuID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -314,13 +338,13 @@ func (s *Server) botLoadMenuSections(ctx context.Context, restaurantID int, menu
 		return []map[string]any{}
 	}
 
-	dishRows, err := s.db.QueryContext(ctx, `
+	dishRows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT section_id, title_snapshot, COALESCE(description_snapshot, ''),
 		       price, supplement_enabled, supplement_price
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ? AND active = 1
 		ORDER BY section_id ASC, position ASC, id ASC
-	`, restaurantID, menuID)
+	`), restaurantID, menuID)
 	if err == nil {
 		for dishRows.Next() {
 			var (
@@ -365,22 +389,28 @@ func (s *Server) botLoadMenuSections(ctx context.Context, restaurantID int, menu
 
 // botToolCoffeeMenu returns the active coffee items (CAFES).
 func (s *Server) botToolCoffeeMenu(ctx context.Context, restaurantID int) (string, error) {
-	return s.botLoadSimpleMenu(ctx, restaurantID, "CAFES", "cafés")
+	return s.botLoadSimpleMenu(ctx, restaurantID, "cafes", "cafés")
 }
 
 // botToolDrinksMenu returns the active drink items (BEBIDAS).
 func (s *Server) botToolDrinksMenu(ctx context.Context, restaurantID int) (string, error) {
-	return s.botLoadSimpleMenu(ctx, restaurantID, "BEBIDAS", "bebidas")
+	return s.botLoadSimpleMenu(ctx, restaurantID, "bebidas", "bebidas")
 }
 
-func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, table string, human string) (string, error) {
-	//nolint:gosec // table is a hardcoded constant, never user input.
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT nombre, precio, COALESCE(descripcion, ''), COALESCE(titulo, ''), COALESCE(suplemento, 0)
-		FROM `+table+`
-		WHERE restaurant_id = ? AND active = 1
+func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, sourceType string, human string) (string, error) {
+	// wa_bot_catalog_read_v1: the backoffice CRUD writes comida_items. Reading
+	// the empty legacy CAFES/BEBIDAS tables made new items invisible to the bot.
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
+		SELECT nombre, precio, IF(COALESCE(description_enabled, 1) = 1, COALESCE(descripcion, ''), ''), COALESCE(titulo, ''), COALESCE(suplemento, 0)
+		FROM comida_items
+		WHERE restaurant_id = ? AND source_type = ? AND active = 1
 		ORDER BY COALESCE(titulo, ''), nombre
-	`, restaurantID)
+	`, `
+		SELECT nombre, precio, CASE WHEN COALESCE(description_enabled, 1) = 1 THEN COALESCE(descripcion, '') ELSE '' END, COALESCE(titulo, ''), COALESCE(suplemento, 0)
+		FROM comida_items
+		WHERE restaurant_id = ? AND source_type = ? AND active = 1
+		ORDER BY COALESCE(titulo COLLATE "es-x-icu", ''), nombre COLLATE "es-x-icu"
+	`), restaurantID, sourceType)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando " + human}), nil
 	}
@@ -418,14 +448,14 @@ func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, table 
 
 // botToolWinesMenu returns the active wines (VINOS) grouped by type.
 func (s *Server) botToolWinesMenu(ctx context.Context, restaurantID int) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT v.nombre, COALESCE(v.precio, 0), COALESCE(v.descripcion, ''), COALESCE(v.tipo, ''),
 		       COALESCE(v.bodega, ''), COALESCE(v.denominacion_origen, ''), COALESCE(v.anyo, ''),
 		       v.graduacion
 		FROM group_menu_wines_v2 v
 		WHERE v.restaurant_id = ? AND v.active = 1
 		ORDER BY COALESCE(v.tipo, ''), v.nombre
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando los vinos"}), nil
 	}
@@ -500,7 +530,7 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 			menuDeGrupoID   sql.NullInt64
 			extrasRaw       sql.NullString
 		)
-		err := s.db.QueryRowContext(ctx, `
+		err := s.db.QueryRowContext(ctx, nativeSQL(`
 			SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'),
 			       COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id,
 			       COALESCE(extras_json, '')
@@ -508,7 +538,15 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 			WHERE restaurant_id = ? AND id = ?
 				AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 			LIMIT 1
-		`, restaurantID, bookingID, national, digits, digits).Scan(&dateISO, &menuAssignedInt, &menuDeGrupoID, &extrasRaw)
+		`, `
+			SELECT to_char(reservation_date, 'YYYY-MM-DD'),
+			       COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id,
+			       COALESCE(extras_json, '')
+			FROM bookings
+			WHERE restaurant_id = ? AND id = ?
+				AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+			LIMIT 1
+		`), restaurantID, bookingID, national, digits, digits).Scan(&dateISO, &menuAssignedInt, &menuDeGrupoID, &extrasRaw)
 		bookingExtras = bookingExtraNames(extrasRaw.String)
 		if errors.Is(err, sql.ErrNoRows) {
 			return botBookingNotFoundForPhone(), nil

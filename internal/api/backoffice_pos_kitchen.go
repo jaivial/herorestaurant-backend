@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,7 +59,7 @@ func requiresPOSActivationAcceptance(from, to string) bool { return from != "LIV
 
 func (s *Server) handleBOPOSKitchenStationsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,name,sort_order,is_active FROM pos_kitchen_stations WHERE restaurant_id=? ORDER BY sort_order,id`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT id,name,sort_order,is_active FROM pos_kitchen_stations WHERE restaurant_id=? ORDER BY sort_order,id`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen stations")
 		return
@@ -94,16 +95,18 @@ func (s *Server) saveBOPOSKitchenStation(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if id == 0 {
-		res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_kitchen_stations (restaurant_id,name,sort_order,is_active) VALUES (?,?,?,?)`, a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive))
+		newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_kitchen_stations (restaurant_id,name,sort_order,is_active) VALUES (?,?,?,?)`), "id", a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive))
 		if err != nil {
 			httpx.WriteError(w, 400, "Kitchen station could not be created")
 			return
 		}
-		id, _ = res.LastInsertId()
+		id = newID
 		httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": id})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_kitchen_stations SET name=?,sort_order=?,is_active=? WHERE restaurant_id=? AND id=?`, strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive), a.ActiveRestaurantID, id)
+	// n==0 -> 404 on MySQL also for an unchanged save (changed-rows count):
+	// the PG twin keeps it with a typed IS DISTINCT FROM predicate.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`UPDATE pos_kitchen_stations SET name=?,sort_order=?,is_active=? WHERE restaurant_id=? AND id=?`, `UPDATE pos_kitchen_stations SET name=?,sort_order=?,is_active=? WHERE restaurant_id=? AND id=? AND ROW(name COLLATE "C",sort_order,is_active) IS DISTINCT FROM ROW(CAST(? AS text) COLLATE "C",CAST(? AS integer),CAST(? AS smallint))`), posChangedRowArgs([]any{strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive)}, a.ActiveRestaurantID, id)...)
 	if err != nil {
 		httpx.WriteError(w, 400, "Kitchen station could not be updated")
 		return
@@ -124,7 +127,7 @@ func (s *Server) handleBOPOSKitchenStationPatch(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleBOPOSKitchenRoutesList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT r.id,r.station_id,s.name,r.pos_product_id,r.category_id,COALESCE(p.name,''),COALESCE(c.name,''),r.priority,r.is_active FROM pos_kitchen_routes r JOIN pos_kitchen_stations s ON s.restaurant_id=r.restaurant_id AND s.id=r.station_id LEFT JOIN pos_products p ON p.restaurant_id=r.restaurant_id AND p.id=r.pos_product_id LEFT JOIN pos_product_categories c ON c.restaurant_id=r.restaurant_id AND c.id=r.category_id WHERE r.restaurant_id=? ORDER BY s.sort_order,r.priority,r.id`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT r.id,r.station_id,s.name,r.pos_product_id,r.category_id,COALESCE(p.name,''),COALESCE(c.name,''),r.priority,r.is_active FROM pos_kitchen_routes r JOIN pos_kitchen_stations s ON s.restaurant_id=r.restaurant_id AND s.id=r.station_id LEFT JOIN pos_products p ON p.restaurant_id=r.restaurant_id AND p.id=r.pos_product_id LEFT JOIN pos_product_categories c ON c.restaurant_id=r.restaurant_id AND c.id=r.category_id WHERE r.restaurant_id=? ORDER BY s.sort_order,r.priority,r.id`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen routes")
 		return
@@ -161,22 +164,22 @@ func (s *Server) handleBOPOSKitchenRouteCreate(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, 400, "Invalid kitchen route")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_kitchen_routes (restaurant_id,station_id,pos_product_id,category_id,priority) SELECT ?,?,?,?,? FROM pos_kitchen_stations WHERE restaurant_id=? AND id=? AND is_active=1`, a.ActiveRestaurantID, in.StationID, in.ProductID, in.CategoryID, in.Priority, a.ActiveRestaurantID, in.StationID)
+	// No active station -> 0 rows: InsertSelectID (0,0,nil) on PG like MySQL.
+	id, n, err := sqldb.InsertSelectID(r.Context(), sqlDialect, s.db, nativeSQL(`INSERT INTO pos_kitchen_routes (restaurant_id,station_id,pos_product_id,category_id,priority) SELECT ?,?,?,?,? FROM pos_kitchen_stations WHERE restaurant_id=? AND id=? AND is_active=1`, `INSERT INTO pos_kitchen_routes (restaurant_id,station_id,pos_product_id,category_id,priority) SELECT CAST(? AS integer),CAST(? AS bigint),CAST(? AS bigint),CAST(? AS bigint),CAST(? AS integer) FROM pos_kitchen_stations WHERE restaurant_id=? AND id=? AND is_active=1`), "id", a.ActiveRestaurantID, in.StationID, in.ProductID, in.CategoryID, in.Priority, a.ActiveRestaurantID, in.StationID)
 	if err != nil {
 		httpx.WriteError(w, 400, "Kitchen route could not be created")
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if n == 0 {
 		httpx.WriteError(w, 404, "Kitchen station not found")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": id})
 }
 func (s *Server) handleBOPOSKitchenRouteDelete(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	res, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_kitchen_routes WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_kitchen_routes WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error deleting kitchen route")
 		return
@@ -230,7 +233,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 	}
 	var visitID int64
 	var status string
-	if err = tx.QueryRowContext(r.Context(), `SELECT visit_id,status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&visitID, &status); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT visit_id,status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT visit_id,CAST(status AS text) FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&visitID, &status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, 409, "Ticket is not open")
 		return
 	}
@@ -239,10 +242,10 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 	courseFilter := ""
 	args := []any{a.ActiveRestaurantID, ticketID}
 	if in.Course != "" {
-		courseFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
+		courseFilter = sqlFragment(" AND COALESCE(NULLIF(l.course,''),'1')=?", ` AND COALESCE(CASE WHEN rtrim(l.course, ' ') COLLATE "C" = '' THEN NULL ELSE l.course END,'1')=?`)
 		args = append(args, in.Course)
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'`+courseFilter+` ORDER BY l.id`, args...)
+	rows, err := tx.QueryContext(r.Context(), portableSQL(`SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'`+courseFilter+` ORDER BY l.id`), args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen lines")
 		return
@@ -269,7 +272,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 	}
 	stations := map[int64][]posKitchenLineSnapshot{}
 	for _, line := range lines {
-		routeRows, qErr := tx.QueryContext(r.Context(), `SELECT DISTINCT station_id FROM pos_kitchen_routes WHERE restaurant_id=? AND is_active=1 AND (pos_product_id=? OR (pos_product_id IS NULL AND category_id=?)) ORDER BY priority,id`, a.ActiveRestaurantID, line.ProductID, line.CategoryID)
+		routeRows, qErr := tx.QueryContext(r.Context(), nativeSQL(`SELECT DISTINCT station_id FROM pos_kitchen_routes WHERE restaurant_id=? AND is_active=1 AND (pos_product_id=? OR (pos_product_id IS NULL AND category_id=?)) ORDER BY priority,id`, `SELECT station_id FROM pos_kitchen_routes WHERE restaurant_id=? AND is_active=1 AND (pos_product_id=? OR (pos_product_id IS NULL AND category_id=?)) GROUP BY station_id ORDER BY MIN(priority),MIN(id)`), a.ActiveRestaurantID, line.ProductID, line.CategoryID)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error routing kitchen lines")
 			return
@@ -290,7 +293,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		}
 		routeRows.Close()
 	}
-	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`, a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
+	priorStations, priorErr := tx.QueryContext(r.Context(), portableSQL(`SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`), a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
 	if priorErr != nil {
 		httpx.WriteError(w, 500, "Error loading dispatch history")
 		return
@@ -333,7 +336,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		sentFilter := ""
 		branchArgs := []any{a.ActiveRestaurantID, ticketID, stationID}
 		if in.Course != "" {
-			sentFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
+			sentFilter = sqlFragment(" AND COALESCE(NULLIF(l.course,''),'1')=?", ` AND COALESCE(CASE WHEN rtrim(l.course, ' ') COLLATE "C" = '' THEN NULL ELSE l.course END,'1')=?`)
 			branchArgs = append(branchArgs, in.Course)
 		}
 		sentArgs := append(append(append([]any{}, branchArgs...), branchArgs...), branchArgs...)
@@ -343,14 +346,14 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		// lives and gone from where it left, so neither check re-cooks or voids
 		// it. pos_kitchen_line_transfers carries the sent quantity across a
 		// partial move, where the dish was split into two rows.
-		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT x.line_id,COALESCE(SUM(x.qty),0) FROM (
+		sentRows, qErr := tx.QueryContext(r.Context(), portableSQL(`SELECT x.line_id,COALESCE(SUM(x.qty),0) FROM (
 			SELECT dl.ticket_line_id line_id,dl.quantity_delta qty FROM pos_ticket_lines l
 			JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=l.restaurant_id AND dl.ticket_line_id=l.id
 			JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
 			WHERE l.restaurant_id=? AND l.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED'`+sentFilter+`
 			UNION ALL SELECT kt.to_line_id,kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.to_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=? AND kt.station_id=?`+sentFilter+`
 			UNION ALL SELECT kt.from_line_id,-kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.from_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=? AND kt.station_id=?`+sentFilter+`
-			) x GROUP BY x.line_id`, sentArgs...)
+			) x GROUP BY x.line_id`), sentArgs...)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error loading dispatch history")
 			return
@@ -376,18 +379,24 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			continue
 		}
 		var sequence int
-		if err = tx.QueryRowContext(r.Context(), `SELECT COALESCE(MAX(sequence_no),0)+1 FROM pos_kitchen_dispatches WHERE restaurant_id=? AND station_id=? AND ticket_id=?`, a.ActiveRestaurantID, stationID, ticketID).Scan(&sequence); err != nil {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(MAX(sequence_no),0)+1 FROM pos_kitchen_dispatches WHERE restaurant_id=? AND station_id=? AND ticket_id=?`), a.ActiveRestaurantID, stationID, ticketID).Scan(&sequence); err != nil {
 			httpx.WriteError(w, 500, "Error sequencing dispatch")
 			return
 		}
 		raw, _ := json.Marshal(deltas)
 		hash := sha256.Sum256(raw)
 		command := strings.TrimSpace(in.IdempotencyKey) + ":" + strconv.FormatInt(stationID, 10)
-		res, insertErr := tx.ExecContext(r.Context(), `INSERT INTO pos_kitchen_dispatches (restaurant_id,station_id,visit_id,ticket_id,sequence_no,command_key,payload_hash,created_by) VALUES (?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, stationID, visitID, ticketID, sequence, command, hex.EncodeToString(hash[:]), a.User.ID)
+		// The duplicate branch re-reads inside the tx: savepoint on PG.
+		var dispatchID int64
+		insertErr := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			var e error
+			dispatchID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_kitchen_dispatches (restaurant_id,station_id,visit_id,ticket_id,sequence_no,command_key,payload_hash,created_by) VALUES (?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, stationID, visitID, ticketID, sequence, command, hex.EncodeToString(hash[:]), a.User.ID)
+			return e
+		})
 		if insertErr != nil {
 			if strings.Contains(strings.ToLower(insertErr.Error()), "duplicate") {
 				var existing int64
-				if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_kitchen_dispatches WHERE restaurant_id=? AND station_id=? AND command_key=?`, a.ActiveRestaurantID, stationID, command).Scan(&existing); err == nil {
+				if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_kitchen_dispatches WHERE restaurant_id=? AND station_id=? AND command_key=?`, `SELECT id FROM pos_kitchen_dispatches WHERE restaurant_id=? AND station_id=? AND app.norm_ascii(command_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, stationID, command).Scan(&existing); err == nil {
 					created = append(created, existing)
 					continue
 				}
@@ -397,17 +406,16 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			httpx.WriteError(w, 500, "Kitchen dispatch could not be created")
 			return
 		}
-		dispatchID, _ := res.LastInsertId()
 		for _, delta := range deltas {
 			line, ok := lineByID[delta.LineID]
 			if !ok {
-				if err = tx.QueryRowContext(r.Context(), `SELECT product_name_snapshot,COALESCE(void_reason,'') FROM pos_ticket_lines WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, delta.LineID).Scan(&line.Name, &line.Notes); err != nil {
+				if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT product_name_snapshot,COALESCE(void_reason,'') FROM pos_ticket_lines WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, delta.LineID).Scan(&line.Name, &line.Notes); err != nil {
 					httpx.WriteError(w, 500, "Error loading voided kitchen line")
 					return
 				}
 				line.LineID = delta.LineID
 			}
-			if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_kitchen_dispatch_lines (restaurant_id,dispatch_id,ticket_line_id,action,quantity_delta,product_name_snapshot,notes_snapshot) VALUES (?,?,?,?,?,?,?)`, a.ActiveRestaurantID, dispatchID, delta.LineID, delta.Action, delta.Quantity, line.Name, stockNullableString(line.Notes)); err != nil {
+			if _, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_kitchen_dispatch_lines (restaurant_id,dispatch_id,ticket_line_id,action,quantity_delta,product_name_snapshot,notes_snapshot) VALUES (?,?,?,?,?,?,?)`), a.ActiveRestaurantID, dispatchID, delta.LineID, delta.Action, delta.Quantity, line.Name, stockNullableString(line.Notes)); err != nil {
 				httpx.WriteError(w, 500, "Kitchen dispatch line could not be created")
 				return
 			}
@@ -434,7 +442,7 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 		where += " AND d.station_id=?"
 		args = append(args, stationID)
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT d.id,d.station_id,s.name,d.ticket_id,t.ticket_number,COALESCE(rt.name,''),d.status,d.created_at FROM pos_kitchen_dispatches d JOIN pos_kitchen_stations s ON s.restaurant_id=d.restaurant_id AND s.id=d.station_id JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id JOIN pos_visits v ON v.restaurant_id=d.restaurant_id AND v.id=d.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `+where+` ORDER BY d.created_at,d.id`, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT d.id,d.station_id,s.name,d.ticket_id,t.ticket_number,COALESCE(rt.name,''),`+sqlFragment("d.status", "CAST(d.status AS text)")+`,d.created_at FROM pos_kitchen_dispatches d JOIN pos_kitchen_stations s ON s.restaurant_id=d.restaurant_id AND s.id=d.station_id JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id JOIN pos_visits v ON v.restaurant_id=d.restaurant_id AND v.id=d.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `+where+` ORDER BY d.created_at,d.id`), args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen queue")
 		return
@@ -449,7 +457,7 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 			httpx.WriteError(w, 500, "Error reading kitchen queue")
 			return
 		}
-		lineRows, qErr := s.db.QueryContext(r.Context(), `SELECT id,product_name_snapshot,quantity_delta,action,COALESCE(notes_snapshot,'') FROM pos_kitchen_dispatch_lines WHERE restaurant_id=? AND dispatch_id=? ORDER BY id`, a.ActiveRestaurantID, id)
+		lineRows, qErr := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,product_name_snapshot,quantity_delta,action,COALESCE(notes_snapshot,'') FROM pos_kitchen_dispatch_lines WHERE restaurant_id=? AND dispatch_id=? ORDER BY id`, `SELECT id,product_name_snapshot,quantity_delta,CAST(action AS text),COALESCE(notes_snapshot,'') FROM pos_kitchen_dispatch_lines WHERE restaurant_id=? AND dispatch_id=? ORDER BY id`), a.ActiveRestaurantID, id)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error loading kitchen dispatch lines")
 			return
@@ -498,7 +506,7 @@ func (s *Server) handleBOPOSKitchenDispatchStatus(w http.ResponseWriter, r *http
 	}
 	defer tx.Rollback()
 	var current string
-	if err = tx.QueryRowContext(r.Context(), `SELECT status FROM pos_kitchen_dispatches WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, id).Scan(&current); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status FROM pos_kitchen_dispatches WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text) FROM pos_kitchen_dispatches WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, id).Scan(&current); errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, 404, "Kitchen dispatch not found")
 		return
 	} else if err != nil {
@@ -513,7 +521,7 @@ func (s *Server) handleBOPOSKitchenDispatchStatus(w http.ResponseWriter, r *http
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "Invalid kitchen status transition", "code": "KITCHEN_STATUS_INVALID"})
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE pos_kitchen_dispatches SET status=?,acknowledged_at=CASE WHEN ? IN ('ACKNOWLEDGED','PREPARING','READY') AND acknowledged_at IS NULL THEN NOW() ELSE acknowledged_at END,ready_at=CASE WHEN ?='READY' THEN NOW() ELSE ready_at END,last_error=CASE WHEN ?<>'FAILED' THEN NULL ELSE last_error END WHERE restaurant_id=? AND id=?`, in.Status, in.Status, in.Status, in.Status, a.ActiveRestaurantID, id)
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_kitchen_dispatches SET status=?,acknowledged_at=CASE WHEN ? IN ('ACKNOWLEDGED','PREPARING','READY') AND acknowledged_at IS NULL THEN NOW() ELSE acknowledged_at END,ready_at=CASE WHEN ?='READY' THEN NOW() ELSE ready_at END,last_error=CASE WHEN ?<>'FAILED' THEN NULL ELSE last_error END WHERE restaurant_id=? AND id=?`, `UPDATE pos_kitchen_dispatches SET status=?,acknowledged_at=CASE WHEN CAST(? AS text) IN ('ACKNOWLEDGED','PREPARING','READY') AND acknowledged_at IS NULL THEN date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') ELSE acknowledged_at END,ready_at=CASE WHEN CAST(? AS text)='READY' THEN date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') ELSE ready_at END,last_error=CASE WHEN CAST(? AS text)<>'FAILED' THEN NULL ELSE last_error END WHERE restaurant_id=? AND id=?`), in.Status, in.Status, in.Status, in.Status, a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error updating kitchen dispatch")
 		return
@@ -531,9 +539,9 @@ func (s *Server) loadPOSActivationReadiness(ctx context.Context, restaurantID in
 		query string
 		args  []any
 		scan  []any
-	}{{`SELECT COUNT(*),COALESCE(SUM(EXISTS(SELECT 1 FROM pos_product_stock_rules r WHERE r.restaurant_id=p.restaurant_id AND r.pos_product_id=p.id AND r.is_active=1)),0),COALESCE(SUM(EXISTS(SELECT 1 FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id JOIN stock_warehouses sw ON sw.restaurant_id=r.restaurant_id AND sw.id=r.warehouse_id WHERE r.restaurant_id=p.restaurant_id AND r.pos_product_id=p.id AND r.is_active=1 AND (i.is_active=0 OR i.deleted_at IS NOT NULL OR i.deduction_source='PRODUCTION' OR sw.is_active=0 OR sw.deleted_at IS NOT NULL))),0) FROM pos_products p WHERE p.restaurant_id=? AND p.is_active=1 AND p.deleted_at IS NULL`, []any{restaurantID}, []any{&active, &mapped, &invalid}}, {`SELECT COUNT(*) FROM pos_service_periods WHERE restaurant_id=? AND is_active=1`, []any{restaurantID}, []any{&periods}}, {`SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`, []any{restaurantID}, []any{&openExceptions}}, {`SELECT COUNT(*) FROM (SELECT l.stock_item_id,l.warehouse_id FROM stock_levels l LEFT JOIN (SELECT restaurant_id,stock_item_id,warehouse_id,SUM(qty_base) qty FROM stock_movements WHERE restaurant_id=? GROUP BY restaurant_id,stock_item_id,warehouse_id) m ON m.restaurant_id=l.restaurant_id AND m.stock_item_id=l.stock_item_id AND m.warehouse_id=l.warehouse_id WHERE l.restaurant_id=? AND ABS(l.qty_base-COALESCE(m.qty,0))>0.0001) d`, []any{restaurantID, restaurantID}, []any{&stockDiffs}}, {`SELECT COUNT(*) FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END)+COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) expected,COALESCE(a.covers,0) actual FROM pos_visits v LEFT JOIN stock_affluence_daily a ON a.restaurant_id=v.restaurant_id AND a.service_date=v.service_date AND a.service_type=v.service_type WHERE v.restaurant_id=? GROUP BY v.restaurant_id,v.service_date,v.service_type,a.covers HAVING expected<>actual) d`, []any{restaurantID}, []any{&coverDiffs}}}
+	}{{nativeSQL(`SELECT COUNT(*),COALESCE(SUM(EXISTS(SELECT 1 FROM pos_product_stock_rules r WHERE r.restaurant_id=p.restaurant_id AND r.pos_product_id=p.id AND r.is_active=1)),0),COALESCE(SUM(EXISTS(SELECT 1 FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id JOIN stock_warehouses sw ON sw.restaurant_id=r.restaurant_id AND sw.id=r.warehouse_id WHERE r.restaurant_id=p.restaurant_id AND r.pos_product_id=p.id AND r.is_active=1 AND (i.is_active=0 OR i.deleted_at IS NOT NULL OR i.deduction_source='PRODUCTION' OR sw.is_active=0 OR sw.deleted_at IS NOT NULL))),0) FROM pos_products p WHERE p.restaurant_id=? AND p.is_active=1 AND p.deleted_at IS NULL`, `SELECT COUNT(*),COALESCE(SUM(CAST(EXISTS(SELECT 1 FROM pos_product_stock_rules r WHERE r.restaurant_id=p.restaurant_id AND r.pos_product_id=p.id AND r.is_active=1) AS integer)),0),COALESCE(SUM(CAST(EXISTS(SELECT 1 FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id JOIN stock_warehouses sw ON sw.restaurant_id=r.restaurant_id AND sw.id=r.warehouse_id WHERE r.restaurant_id=p.restaurant_id AND r.pos_product_id=p.id AND r.is_active=1 AND (i.is_active=0 OR i.deleted_at IS NOT NULL OR i.deduction_source='PRODUCTION' OR sw.is_active=0 OR sw.deleted_at IS NOT NULL)) AS integer)),0) FROM pos_products p WHERE p.restaurant_id=? AND p.is_active=1 AND p.deleted_at IS NULL`), []any{restaurantID}, []any{&active, &mapped, &invalid}}, {portableSQL(`SELECT COUNT(*) FROM pos_service_periods WHERE restaurant_id=? AND is_active=1`), []any{restaurantID}, []any{&periods}}, {portableSQL(`SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`), []any{restaurantID}, []any{&openExceptions}}, {portableSQL(`SELECT COUNT(*) FROM (SELECT l.stock_item_id,l.warehouse_id FROM stock_levels l LEFT JOIN (SELECT restaurant_id,stock_item_id,warehouse_id,SUM(qty_base) qty FROM stock_movements WHERE restaurant_id=? GROUP BY restaurant_id,stock_item_id,warehouse_id) m ON m.restaurant_id=l.restaurant_id AND m.stock_item_id=l.stock_item_id AND m.warehouse_id=l.warehouse_id WHERE l.restaurant_id=? AND ABS(l.qty_base-COALESCE(m.qty,0))>0.0001) d`), []any{restaurantID, restaurantID}, []any{&stockDiffs}}, {nativeSQL(`SELECT COUNT(*) FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END)+COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) expected,COALESCE(a.covers,0) actual FROM pos_visits v LEFT JOIN stock_affluence_daily a ON a.restaurant_id=v.restaurant_id AND a.service_date=v.service_date AND a.service_type=v.service_type WHERE v.restaurant_id=? GROUP BY v.restaurant_id,v.service_date,v.service_type,a.covers HAVING expected<>actual) d`, `SELECT COUNT(*) FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END)+COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND CAST(c.service_type AS text)=CAST(v.service_type AS text)),0) expected,COALESCE(a.covers,0) actual FROM pos_visits v LEFT JOIN stock_affluence_daily a ON a.restaurant_id=v.restaurant_id AND a.service_date=v.service_date AND CAST(a.service_type AS text)=CAST(v.service_type AS text) WHERE v.restaurant_id=? GROUP BY v.restaurant_id,v.service_date,v.service_type,a.covers HAVING SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END)+COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND CAST(c.service_type AS text)=CAST(v.service_type AS text)),0)<>COALESCE(a.covers,0)) d`), []any{restaurantID}, []any{&coverDiffs}}}
 	for _, query := range queries {
-		if err := s.db.QueryRowContext(ctx, query.query, query.args...).Scan(query.scan...); err != nil {
+		if err := s.db.QueryRowContext(ctx, selectedSQL(query.query), query.args...).Scan(query.scan...); err != nil {
 			return nil, err
 		}
 	}
@@ -575,11 +583,20 @@ func (s *Server) handleBOPOSActivationAccept(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	snapshot, _ := json.Marshal(readiness)
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_activation_acceptances (restaurant_id,acceptance_type,evidence_note,snapshot_json,accepted_by) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, in.Type, strings.TrimSpace(in.EvidenceNote), string(snapshot), a.User.ID)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`INSERT INTO pos_activation_acceptances (restaurant_id,acceptance_type,evidence_note,snapshot_json,accepted_by) VALUES (?,?,?,?,?)`, `INSERT INTO pos_activation_acceptances (restaurant_id,acceptance_type,evidence_note,snapshot_json,accepted_by) VALUES (?,?,?,CAST(? AS jsonb),?)`), "id", a.ActiveRestaurantID, in.Type, strings.TrimSpace(in.EvidenceNote), string(snapshot), a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error saving activation acceptance")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": id})
+}
+
+// posChangedRowArgs: MySQL "SET a=?,b=? WHERE k=?.." args; the PG twin
+// repeats the SET operands for its IS DISTINCT FROM changed-rows predicate.
+func posChangedRowArgs(set []any, where ...any) []any {
+	out := append(append([]any{}, set...), where...)
+	if sqlDialect == sqldb.Postgres {
+		out = append(out, set...)
+	}
+	return out
 }

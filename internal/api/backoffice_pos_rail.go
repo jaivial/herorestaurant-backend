@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Handlers backing the POS control-rail features that needed new schema:
@@ -102,7 +103,7 @@ func (s *Server) handleBOPOSVisitPark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var status string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT status FROM pos_visits WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, visitID).Scan(&status); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT status FROM pos_visits WHERE restaurant_id=? AND id=?`, `SELECT CAST(status AS text) FROM pos_visits WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, visitID).Scan(&status); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Visit not found")
 		return
 	}
@@ -112,9 +113,9 @@ func (s *Server) handleBOPOSVisitPark(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	if in.Parked {
-		_, err = s.db.ExecContext(r.Context(), `UPDATE pos_visits SET parked_at=NOW(),parked_note=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, stockNullableString(note), a.ActiveRestaurantID, visitID)
+		_, err = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE pos_visits SET parked_at=NOW(),parked_note=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, `UPDATE pos_visits SET parked_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),parked_note=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`), stockNullableString(note), a.ActiveRestaurantID, visitID)
 	} else {
-		_, err = s.db.ExecContext(r.Context(), `UPDATE pos_visits SET parked_at=NULL,parked_note=NULL,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, a.ActiveRestaurantID, visitID)
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_visits SET parked_at=NULL,parked_note=NULL,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`), a.ActiveRestaurantID, visitID)
 	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error parking visit")
@@ -124,7 +125,7 @@ func (s *Server) handleBOPOSVisitPark(w http.ResponseWriter, r *http.Request) {
 	if in.Parked {
 		action = "PARK"
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,?,JSON_OBJECT('parked',?,'note',?),?)`, a.ActiveRestaurantID, visitID, action, in.Parked, note, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,?,JSON_OBJECT('parked',?,'note',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,?,jsonb_build_object('parked',CAST(CAST(? AS boolean) AS integer),'note',CAST(? AS text)),?)`), a.ActiveRestaurantID, visitID, action, in.Parked, note, a.User.ID)
 	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_visit_updated", map[string]any{"visitId": visitID, "parked": in.Parked})
 	visit, loadErr := s.loadPOSVisit(r.Context(), a.ActiveRestaurantID, visitID)
 	if loadErr != nil {
@@ -179,17 +180,21 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	mergeKey := strings.TrimSpace(in.IdempotencyKey)
 	sourceJSON, _ := json.Marshal(in.SourceVisitIDs)
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_visit_merges (restaurant_id,target_visit_id,idempotency_key,source_visit_ids_json,created_by) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, targetID, mergeKey, string(sourceJSON), a.User.ID); err != nil {
+	// Duplicate key re-reads in this tx: savepoint on PG.
+	if err = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_visit_merges (restaurant_id,target_visit_id,idempotency_key,source_visit_ids_json,created_by) VALUES (?,?,?,?,?)`, `INSERT INTO pos_visit_merges (restaurant_id,target_visit_id,idempotency_key,source_visit_ids_json,created_by) VALUES (?,?,?,CAST(? AS jsonb),?)`), a.ActiveRestaurantID, targetID, mergeKey, string(sourceJSON), a.User.ID)
+		return e
+	}); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			var existingTarget int64
-			if lookupErr := tx.QueryRowContext(r.Context(), `SELECT target_visit_id FROM pos_visit_merges WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, mergeKey).Scan(&existingTarget); lookupErr != nil || existingTarget != targetID {
+			if lookupErr := tx.QueryRowContext(r.Context(), nativeSQL(`SELECT target_visit_id FROM pos_visit_merges WHERE restaurant_id=? AND idempotency_key=?`, `SELECT target_visit_id FROM pos_visit_merges WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, mergeKey).Scan(&existingTarget); lookupErr != nil || existingTarget != targetID {
 				httpx.WriteError(w, http.StatusConflict, "Merge key belongs to another visit")
 				return
 			}
 			tx.Rollback()
 			visit, visitErr := s.loadPOSVisit(r.Context(), a.ActiveRestaurantID, targetID)
 			var existingTicketID int64
-			ticketIDErr := s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN' ORDER BY id LIMIT 1`, a.ActiveRestaurantID, targetID).Scan(&existingTicketID)
+			ticketIDErr := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN' ORDER BY id LIMIT 1`), a.ActiveRestaurantID, targetID).Scan(&existingTicketID)
 			ticket, ticketErr := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, existingTicketID)
 			if visitErr != nil || ticketIDErr != nil || ticketErr != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error loading merged visit")
@@ -204,19 +209,19 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 
 	var targetStatus, targetChannel, targetServiceDate string
 	var targetCovers int
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,channel,covers,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetID).Scan(&targetStatus, &targetChannel, &targetCovers, &targetServiceDate); err != nil || targetStatus != "OPEN" || targetChannel != "DINE_IN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,channel,covers,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),CAST(channel AS text),covers,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, targetID).Scan(&targetStatus, &targetChannel, &targetCovers, &targetServiceDate); err != nil || targetStatus != "OPEN" || targetChannel != "DINE_IN" {
 		httpx.WriteError(w, http.StatusConflict, "Target visit is not open")
 		return
 	}
 	targetServiceDate = normalizePOSDate(targetServiceDate)
 	var targetTicketID int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN' ORDER BY id LIMIT 1`, a.ActiveRestaurantID, targetID).Scan(&targetTicketID); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN' ORDER BY id LIMIT 1`), a.ActiveRestaurantID, targetID).Scan(&targetTicketID); err != nil {
 		httpx.WriteError(w, http.StatusConflict, "Target visit has no open ticket")
 		return
 	}
 	var mergedTicketDiscount, mergedSurcharge int64
 	var targetVersion int
-	if err = tx.QueryRowContext(r.Context(), `SELECT ticket_discount_cents,surcharge_cents,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetTicketID).Scan(&mergedTicketDiscount, &mergedSurcharge, &targetVersion); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT ticket_discount_cents,surcharge_cents,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, targetTicketID).Scan(&mergedTicketDiscount, &mergedSurcharge, &targetVersion); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading target adjustments")
 		return
 	}
@@ -235,7 +240,7 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 		var sourceStatus, sourceChannel, sourceServiceDate string
 		var sourceCovers int
 		var parkedAt sql.NullTime
-		if err = tx.QueryRowContext(r.Context(), `SELECT status,channel,covers,parked_at,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, sourceID).Scan(&sourceStatus, &sourceChannel, &sourceCovers, &parkedAt, &sourceServiceDate); err != nil || sourceStatus != "OPEN" || sourceChannel != "DINE_IN" || parkedAt.Valid {
+		if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,channel,covers,parked_at,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),CAST(channel AS text),covers,parked_at,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, sourceID).Scan(&sourceStatus, &sourceChannel, &sourceCovers, &parkedAt, &sourceServiceDate); err != nil || sourceStatus != "OPEN" || sourceChannel != "DINE_IN" || parkedAt.Valid {
 			httpx.WriteError(w, http.StatusConflict, "Source visit is not open")
 			return
 		}
@@ -247,57 +252,63 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 		}
 		// A source that already took money must not be folded into another bill.
 		var settled int
-		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status NOT IN ('OPEN','VOIDED')`, a.ActiveRestaurantID, sourceID).Scan(&settled); err != nil || settled > 0 {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status NOT IN ('OPEN','VOIDED')`), a.ActiveRestaurantID, sourceID).Scan(&settled); err != nil || settled > 0 {
 			httpx.WriteError(w, http.StatusConflict, "Paid visit cannot be merged")
 			return
 		}
 		var sourceDiscount, sourceSurcharge int64
-		if err = tx.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(ticket_discount_cents),0),COALESCE(SUM(surcharge_cents),0) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`, a.ActiveRestaurantID, sourceID).Scan(&sourceDiscount, &sourceSurcharge); err != nil {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(SUM(ticket_discount_cents),0),COALESCE(SUM(surcharge_cents),0) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`), a.ActiveRestaurantID, sourceID).Scan(&sourceDiscount, &sourceSurcharge); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error loading source adjustments")
 			return
 		}
 		mergedTicketDiscount += sourceDiscount
 		mergedSurcharge += sourceSurcharge
-		res, execErr := tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines l JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id SET l.ticket_id=? WHERE l.restaurant_id=? AND t.visit_id=? AND t.status='OPEN' AND l.status='ACTIVE'`, targetTicketID, a.ActiveRestaurantID, sourceID)
+		res, execErr := tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_lines l JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id SET l.ticket_id=? WHERE l.restaurant_id=? AND t.visit_id=? AND t.status='OPEN' AND l.status='ACTIVE'`, `UPDATE pos_ticket_lines l SET ticket_id=? FROM pos_tickets t WHERE t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id AND l.restaurant_id=? AND t.visit_id=? AND t.status='OPEN' AND l.status='ACTIVE'`), targetTicketID, a.ActiveRestaurantID, sourceID)
 		if execErr != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error moving merged lines")
 			return
 		}
 		affected, _ := res.RowsAffected()
 		// Update pos_ticket_line_stock to reference the new target ticket
-		_, _ = tx.ExecContext(r.Context(), `UPDATE pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id SET s.ticket_id=? WHERE s.restaurant_id=? AND t.visit_id=?`, targetTicketID, a.ActiveRestaurantID, sourceID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored error continues the tx
+			_, e := tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id SET s.ticket_id=? WHERE s.restaurant_id=? AND t.visit_id=?`, `UPDATE pos_ticket_line_stock s SET ticket_id=? FROM pos_tickets t WHERE t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id AND s.restaurant_id=? AND t.visit_id=?`), targetTicketID, a.ActiveRestaurantID, sourceID)
+			return e
+		})
 		// Re-point the source visit's kitchen dispatches so the KDS queue and the
 		// delta history do not treat regrouped dishes as new and cook them twice.
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_kitchen_dispatches d JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id SET d.ticket_id=? WHERE d.restaurant_id=? AND t.visit_id=?`, targetTicketID, a.ActiveRestaurantID, sourceID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_kitchen_dispatches d JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id SET d.ticket_id=? WHERE d.restaurant_id=? AND t.visit_id=?`, `UPDATE pos_kitchen_dispatches d SET ticket_id=? FROM pos_tickets t WHERE t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id AND d.restaurant_id=? AND t.visit_id=?`), targetTicketID, a.ActiveRestaurantID, sourceID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error moving kitchen dispatches")
 			return
 		}
 		movedLines += int(affected)
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_adjustments a JOIN pos_tickets t ON t.restaurant_id=a.restaurant_id AND t.id=a.ticket_id SET a.ticket_id=? WHERE a.restaurant_id=? AND t.visit_id=? AND t.status='OPEN'`, targetTicketID, a.ActiveRestaurantID, sourceID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_adjustments a JOIN pos_tickets t ON t.restaurant_id=a.restaurant_id AND t.id=a.ticket_id SET a.ticket_id=? WHERE a.restaurant_id=? AND t.visit_id=? AND t.status='OPEN'`, `UPDATE pos_ticket_adjustments a SET ticket_id=? FROM pos_tickets t WHERE t.restaurant_id=a.restaurant_id AND t.id=a.ticket_id AND a.restaurant_id=? AND t.visit_id=? AND t.status='OPEN'`), targetTicketID, a.ActiveRestaurantID, sourceID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error moving source adjustments")
 			return
 		}
-		if _, err = tx.ExecContext(r.Context(), `INSERT IGNORE INTO pos_ticket_tags (restaurant_id,ticket_id,tag_id,created_by) SELECT restaurant_id,?,tag_id,created_by FROM pos_ticket_tags WHERE restaurant_id=? AND ticket_id IN (SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN')`, targetTicketID, a.ActiveRestaurantID, a.ActiveRestaurantID, sourceID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_ticket_tags (restaurant_id,ticket_id,tag_id,created_by) SELECT restaurant_id,?,tag_id,created_by FROM pos_ticket_tags WHERE restaurant_id=? AND ticket_id IN (SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN') ON DUPLICATE KEY UPDATE tag_id=VALUES(tag_id)`, `INSERT INTO pos_ticket_tags (restaurant_id,ticket_id,tag_id,created_by) SELECT restaurant_id,CAST(? AS bigint),tag_id,created_by FROM pos_ticket_tags WHERE restaurant_id=? AND ticket_id IN (SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN') ON CONFLICT (restaurant_id,ticket_id,tag_id) DO NOTHING`), targetTicketID, a.ActiveRestaurantID, a.ActiveRestaurantID, sourceID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error moving source tags")
 			return
 		}
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET status='VOIDED',voided_at=NOW(),closed_by=? WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`, a.User.ID, a.ActiveRestaurantID, sourceID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_tickets SET status='VOIDED',voided_at=NOW(),closed_by=? WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`, `UPDATE pos_tickets SET status='VOIDED',voided_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),closed_by=? WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`), a.User.ID, a.ActiveRestaurantID, sourceID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error closing merged tickets")
 			return
 		}
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_visits SET status='MERGED',merged_into_visit_id=?,closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, targetID, a.User.ID, a.ActiveRestaurantID, sourceID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_visits SET status='MERGED',merged_into_visit_id=?,closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, `UPDATE pos_visits SET status='MERGED',merged_into_visit_id=?,closed_by=?,closed_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),version=version+1 WHERE restaurant_id=? AND id=?`), targetID, a.User.ID, a.ActiveRestaurantID, sourceID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error merging visit")
 			return
 		}
 		mergedCovers += sourceCovers
-		_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,'MERGE',JSON_OBJECT('mergedInto',?,'movedLines',?),?)`, a.ActiveRestaurantID, sourceID, targetID, affected, a.User.ID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored error continues the tx
+			_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,'MERGE',JSON_OBJECT('mergedInto',?,'movedLines',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,'MERGE',jsonb_build_object('mergedInto',CAST(? AS bigint),'movedLines',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, sourceID, targetID, affected, a.User.ID)
+			return e
+		})
 	}
 
-	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_visits SET covers=?,version=version+1 WHERE restaurant_id=? AND id=?`, mergedCovers, a.ActiveRestaurantID, targetID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE pos_visits SET covers=?,version=version+1 WHERE restaurant_id=? AND id=?`), mergedCovers, a.ActiveRestaurantID, targetID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating merged covers")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET surcharge_cents=? WHERE restaurant_id=? AND id=?`, mergedSurcharge, a.ActiveRestaurantID, targetTicketID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE pos_tickets SET surcharge_cents=? WHERE restaurant_id=? AND id=?`), mergedSurcharge, a.ActiveRestaurantID, targetTicketID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error preserving merged surcharge")
 		return
 	}
@@ -343,7 +354,7 @@ func (s *Server) handleBOPOSVisitCustomer(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusBadRequest, "Customer data too long")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_visits SET customer_name=?,customer_tax_id=?,customer_address=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, stockNullableString(name), stockNullableString(taxID), stockNullableString(address), a.ActiveRestaurantID, visitID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_visits SET customer_name=?,customer_tax_id=?,customer_address=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`), stockNullableString(name), stockNullableString(taxID), stockNullableString(address), a.ActiveRestaurantID, visitID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving customer")
 		return
@@ -352,7 +363,7 @@ func (s *Server) handleBOPOSVisitCustomer(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusConflict, "Open visit not found")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,'CUSTOMER',JSON_OBJECT('customerName',?,'customerTaxId',?),?)`, a.ActiveRestaurantID, visitID, name, taxID, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,'CUSTOMER',JSON_OBJECT('customerName',?,'customerTaxId',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'visit',?,'CUSTOMER',jsonb_build_object('customerName',CAST(? AS text),'customerTaxId',CAST(? AS text)),?)`), a.ActiveRestaurantID, visitID, name, taxID, a.User.ID)
 	visit, loadErr := s.loadPOSVisit(r.Context(), a.ActiveRestaurantID, visitID)
 	if loadErr != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading customer visit")
@@ -384,7 +395,7 @@ func (s *Server) handleBOPOSDrawerOpen(w http.ResponseWriter, r *http.Request) {
 	}
 	var existingEventID, existingShiftID int64
 	var existingReason string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT id,shift_id,reason FROM pos_drawer_events WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingEventID, &existingShiftID, &existingReason); err == nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id,shift_id,reason FROM pos_drawer_events WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id,shift_id,CAST(reason AS text) FROM pos_drawer_events WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingEventID, &existingShiftID, &existingReason); err == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "drawerEventId": existingEventID, "shiftId": existingShiftID, "reason": existingReason})
 		return
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -400,23 +411,22 @@ func (s *Server) handleBOPOSDrawerOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var shiftID int64
-	if err := s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, a.ActiveRestaurantID).Scan(&shiftID); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`), a.ActiveRestaurantID).Scan(&shiftID); err != nil {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open a cash shift before using the drawer", "code": "POS_SHIFT_REQUIRED"})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_drawer_events (restaurant_id,shift_id,reason,note,idempotency_key,opened_by) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, shiftID, reason, stockNullableString(in.Note), in.IdempotencyKey, a.User.ID)
+	eventID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_drawer_events (restaurant_id,shift_id,reason,note,idempotency_key,opened_by) VALUES (?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, shiftID, reason, stockNullableString(in.Note), in.IdempotencyKey, a.User.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			var existing int64
-			_ = s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_drawer_events WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, strings.TrimSpace(in.IdempotencyKey)).Scan(&existing)
+			_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_drawer_events WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id FROM pos_drawer_events WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, strings.TrimSpace(in.IdempotencyKey)).Scan(&existing)
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "drawerEventId": existing})
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recording drawer event")
 		return
 	}
-	eventID, _ := res.LastInsertId()
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'drawer',?,'OPEN',JSON_OBJECT('shiftId',?,'reason',?),?)`, a.ActiveRestaurantID, eventID, shiftID, reason, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'drawer',?,'OPEN',JSON_OBJECT('shiftId',?,'reason',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'drawer',?,'OPEN',jsonb_build_object('shiftId',CAST(? AS bigint),'reason',CAST(? AS text)),?)`), a.ActiveRestaurantID, eventID, shiftID, reason, a.User.ID)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "drawerEventId": eventID, "shiftId": shiftID, "reason": reason})
 }
 
@@ -472,7 +482,7 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 	}
 	defer tx.Rollback()
 	var existingAdjustment, existingTicketID int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT id,ticket_id FROM pos_ticket_adjustments WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, strings.TrimSpace(in.IdempotencyKey)).Scan(&existingAdjustment, &existingTicketID); err == nil {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id,ticket_id FROM pos_ticket_adjustments WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id,ticket_id FROM pos_ticket_adjustments WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, strings.TrimSpace(in.IdempotencyKey)).Scan(&existingAdjustment, &existingTicketID); err == nil {
 		if existingTicketID != ticketID {
 			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Idempotency key belongs to another ticket", "code": "IDEMPOTENCY_CONFLICT"})
 			return
@@ -488,7 +498,7 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 	var status string
 	var version int
 	var subtotal, lineDiscounts, currentDiscount, currentSurcharge int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,version,subtotal_gross_cents,discount_cents,ticket_discount_cents,surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version, &subtotal, &lineDiscounts, &currentDiscount, &currentSurcharge); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,version,subtotal_gross_cents,discount_cents,ticket_discount_cents,surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),version,subtotal_gross_cents,discount_cents,ticket_discount_cents,surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&status, &version, &subtotal, &lineDiscounts, &currentDiscount, &currentSurcharge); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -524,7 +534,7 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 	} else {
 		nextSurcharge += amount
 	}
-	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET surcharge_cents=? WHERE restaurant_id=? AND id=?`, nextSurcharge, a.ActiveRestaurantID, ticketID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE pos_tickets SET surcharge_cents=? WHERE restaurant_id=? AND id=?`), nextSurcharge, a.ActiveRestaurantID, ticketID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error applying adjustment")
 		return
 	}
@@ -536,7 +546,7 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 	if mode == "PERCENT" {
 		percentValue = in.Percent
 	}
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_adjustments (restaurant_id,ticket_id,type,mode,percent_value,amount_cents,reason,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, kind, mode, percentValue, signed, reason, strings.TrimSpace(in.IdempotencyKey), a.User.ID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_ticket_adjustments (restaurant_id,ticket_id,type,mode,percent_value,amount_cents,reason,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?)`), a.ActiveRestaurantID, ticketID, kind, mode, percentValue, signed, reason, strings.TrimSpace(in.IdempotencyKey), a.User.ID); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			tx.Rollback()
 			ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
@@ -546,7 +556,10 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recording adjustment")
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,?,JSON_OBJECT('amountCents',?,'mode',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, kind, signed, mode, reason, approvedBy, a.User.ID)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored error continues the tx
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,?,JSON_OBJECT('amountCents',?,'mode',?,'reason',?,'approvedBy',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,?,jsonb_build_object('amountCents',CAST(? AS bigint),'mode',CAST(? AS text),'reason',CAST(? AS text),'approvedBy',CAST(? AS text)),?)`), a.ActiveRestaurantID, ticketID, kind, signed, mode, reason, approvedBy, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error applying adjustment")
 		return
@@ -591,7 +604,7 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var status string
 	var version int
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&status, &version); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -602,7 +615,7 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 	var quantity float64
 	var unitPrice int64
 	var lineStatus string
-	if err = tx.QueryRowContext(r.Context(), `SELECT quantity,unit_price_gross_cents,status FROM pos_ticket_lines WHERE restaurant_id=? AND id=? AND ticket_id=? FOR UPDATE`, a.ActiveRestaurantID, lineID, ticketID).Scan(&quantity, &unitPrice, &lineStatus); err != nil || lineStatus != "ACTIVE" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT quantity,unit_price_gross_cents,status FROM pos_ticket_lines WHERE restaurant_id=? AND id=? AND ticket_id=? FOR UPDATE`, `SELECT quantity,unit_price_gross_cents,CAST(status AS text) FROM pos_ticket_lines WHERE restaurant_id=? AND id=? AND ticket_id=? FOR UPDATE`), a.ActiveRestaurantID, lineID, ticketID).Scan(&quantity, &unitPrice, &lineStatus); err != nil || lineStatus != "ACTIVE" {
 		httpx.WriteError(w, http.StatusConflict, "Line is not active")
 		return
 	}
@@ -615,16 +628,16 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 		if approvedBy, ok = s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, gross, true); !ok {
 			return
 		}
-		_, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET discount_cents=?,comped_at=NOW(),comp_reason=?,comped_by=? WHERE restaurant_id=? AND id=?`, gross, reason, a.User.ID, a.ActiveRestaurantID, lineID)
+		_, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_lines SET discount_cents=?,comped_at=NOW(),comp_reason=?,comped_by=? WHERE restaurant_id=? AND id=?`, `UPDATE pos_ticket_lines SET discount_cents=?,comped_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),comp_reason=?,comped_by=? WHERE restaurant_id=? AND id=?`), gross, reason, a.User.ID, a.ActiveRestaurantID, lineID)
 	} else {
-		_, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET discount_cents=0,comped_at=NULL,comp_reason=NULL,comped_by=NULL WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, lineID)
+		_, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE pos_ticket_lines SET discount_cents=0,comped_at=NULL,comp_reason=NULL,comped_by=NULL WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, lineID)
 	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error comping line")
 		return
 	}
 	var discount int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, ticketID).Scan(&discount); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, ticketID).Scan(&discount); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")
 		return
 	}
@@ -632,7 +645,10 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'COMP',JSON_OBJECT('comped',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, lineID, in.Comped, reason, approvedBy, a.User.ID)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored error continues the tx
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'COMP',JSON_OBJECT('comped',?,'reason',?,'approvedBy',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'COMP',jsonb_build_object('comped',CAST(CAST(? AS boolean) AS integer),'reason',CAST(? AS text),'approvedBy',CAST(? AS text)),?)`), a.ActiveRestaurantID, lineID, in.Comped, reason, approvedBy, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error comping line")
 		return
@@ -664,7 +680,7 @@ func (s *Server) handleBOPOSTicketOperator(w http.ResponseWriter, r *http.Reques
 	var operator any
 	if in.OperatorMemberID > 0 {
 		var exists int
-		if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`, a.ActiveRestaurantID, in.OperatorMemberID).Scan(&exists); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`), a.ActiveRestaurantID, in.OperatorMemberID).Scan(&exists); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Member not found")
 			return
 		}
@@ -676,7 +692,7 @@ func (s *Server) handleBOPOSTicketOperator(w http.ResponseWriter, r *http.Reques
 		query += ` AND version=?`
 		args = append(args, in.ExpectedVersion)
 	}
-	res, err := s.db.ExecContext(r.Context(), query, args...)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(query), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error setting operator")
 		return
@@ -685,7 +701,7 @@ func (s *Server) handleBOPOSTicketOperator(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, http.StatusConflict, "Open ticket not found")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'OPERATOR',JSON_OBJECT('operatorMemberId',?),?)`, a.ActiveRestaurantID, ticketID, operator, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'OPERATOR',JSON_OBJECT('operatorMemberId',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'OPERATOR',jsonb_build_object('operatorMemberId',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, ticketID, operator, a.User.ID)
 	ticket, loadErr := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
 	if loadErr != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading operator ticket")
@@ -700,7 +716,7 @@ func (s *Server) handleBOPOSTicketOperator(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleBOPOSTagsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,name,COALESCE(color,''),scope,sort_order,is_active FROM pos_tags WHERE restaurant_id=? ORDER BY sort_order,name`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,name,COALESCE(color,''),scope,sort_order,is_active FROM pos_tags WHERE restaurant_id=? ORDER BY sort_order,name`, `SELECT id,name,COALESCE(color,''),CAST(scope AS text),sort_order,is_active FROM pos_tags WHERE restaurant_id=? ORDER BY sort_order,name COLLATE "es-x-icu"`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading tags")
 		return
@@ -740,7 +756,7 @@ func (s *Server) handleBOPOSTagCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid tag scope")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_tags (restaurant_id,name,color,scope,sort_order) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, strings.TrimSpace(in.Name), stockNullableString(strings.TrimSpace(in.Color)), scope, in.SortOrder)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_tags (restaurant_id,name,color,scope,sort_order) VALUES (?,?,?,?,?)`), "id", a.ActiveRestaurantID, strings.TrimSpace(in.Name), stockNullableString(strings.TrimSpace(in.Color)), scope, in.SortOrder)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteError(w, http.StatusConflict, "Tag already exists")
@@ -749,7 +765,6 @@ func (s *Server) handleBOPOSTagCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating tag")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 }
 
@@ -784,13 +799,13 @@ func (s *Server) attachPOSTag(w http.ResponseWriter, r *http.Request, target str
 	}
 	attach := in.Attach == nil || *in.Attach
 	var status string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, ticketID).Scan(&status); err != nil || status != "OPEN" {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, `SELECT CAST(status AS text) FROM pos_tickets WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, ticketID).Scan(&status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
 	if target == "line" {
 		var owned int
-		if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`, a.ActiveRestaurantID, ticketID, entityID).Scan(&owned); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`), a.ActiveRestaurantID, ticketID, entityID).Scan(&owned); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Active ticket line not found")
 			return
 		}
@@ -801,7 +816,7 @@ func (s *Server) attachPOSTag(w http.ResponseWriter, r *http.Request, target str
 		if target == "line" {
 			tagQuery = `SELECT 1 FROM pos_tags WHERE restaurant_id=? AND id=? AND is_active=1 AND scope IN ('LINE','BOTH')`
 		}
-		if err := s.db.QueryRowContext(r.Context(), tagQuery, a.ActiveRestaurantID, in.TagID).Scan(&validTag); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), portableSQL(tagQuery), a.ActiveRestaurantID, in.TagID).Scan(&validTag); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Tag is not valid for this target")
 			return
 		}
@@ -809,13 +824,13 @@ func (s *Server) attachPOSTag(w http.ResponseWriter, r *http.Request, target str
 	var err error
 	switch {
 	case target == "line" && attach:
-		_, err = s.db.ExecContext(r.Context(), `INSERT IGNORE INTO pos_ticket_line_tags (restaurant_id,ticket_line_id,tag_id,created_by) VALUES (?,?,?,?)`, a.ActiveRestaurantID, entityID, in.TagID, a.User.ID)
+		_, err = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_ticket_line_tags (restaurant_id,ticket_line_id,tag_id,created_by) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE tag_id=tag_id`, `INSERT INTO pos_ticket_line_tags (restaurant_id,ticket_line_id,tag_id,created_by) VALUES (?,?,?,?) ON CONFLICT (restaurant_id,ticket_line_id,tag_id) DO NOTHING`), a.ActiveRestaurantID, entityID, in.TagID, a.User.ID)
 	case target == "line":
-		_, err = s.db.ExecContext(r.Context(), `DELETE FROM pos_ticket_line_tags WHERE restaurant_id=? AND ticket_line_id=? AND tag_id=?`, a.ActiveRestaurantID, entityID, in.TagID)
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_ticket_line_tags WHERE restaurant_id=? AND ticket_line_id=? AND tag_id=?`), a.ActiveRestaurantID, entityID, in.TagID)
 	case attach:
-		_, err = s.db.ExecContext(r.Context(), `INSERT IGNORE INTO pos_ticket_tags (restaurant_id,ticket_id,tag_id,created_by) VALUES (?,?,?,?)`, a.ActiveRestaurantID, entityID, in.TagID, a.User.ID)
+		_, err = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_ticket_tags (restaurant_id,ticket_id,tag_id,created_by) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE tag_id=tag_id`, `INSERT INTO pos_ticket_tags (restaurant_id,ticket_id,tag_id,created_by) VALUES (?,?,?,?) ON CONFLICT (restaurant_id,ticket_id,tag_id) DO NOTHING`), a.ActiveRestaurantID, entityID, in.TagID, a.User.ID)
 	default:
-		_, err = s.db.ExecContext(r.Context(), `DELETE FROM pos_ticket_tags WHERE restaurant_id=? AND ticket_id=? AND tag_id=?`, a.ActiveRestaurantID, entityID, in.TagID)
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_ticket_tags WHERE restaurant_id=? AND ticket_id=? AND tag_id=?`), a.ActiveRestaurantID, entityID, in.TagID)
 	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating tags")

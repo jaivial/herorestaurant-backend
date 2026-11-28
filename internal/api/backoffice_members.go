@@ -82,7 +82,7 @@ func (s *Server) handleBOMembersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT
 			m.id,
 			m.bo_user_id,
@@ -99,7 +99,7 @@ func (s *Server) handleBOMembersList(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN member_contracts c ON c.restaurant_member_id = m.id
 		WHERE m.restaurant_id = ? AND m.is_active = 1
 		ORDER BY m.last_name ASC, m.first_name ASC, m.id ASC
-	`, a.ActiveRestaurantID)
+	`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando miembros")
 		return
@@ -311,7 +311,7 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.ExecContext(r.Context(), `
+	result, err := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE restaurant_members
 		SET
 			first_name = ?,
@@ -323,7 +323,21 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 			whatsapp_number = ?,
 			photo_url = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo), memberID, a.ActiveRestaurantID)
+	`, `
+		UPDATE restaurant_members
+		SET
+			first_name = $1,
+			last_name = $2,
+			email = $3,
+			dni = $4,
+			bank_account = $5,
+			phone = $6,
+			whatsapp_number = $7,
+			photo_url = $8
+		WHERE id = $9 AND restaurant_id = $10 AND is_active = 1
+		  AND ROW(first_name COLLATE "C", last_name COLLATE "C", email COLLATE "C", dni COLLATE "C", bank_account COLLATE "C", phone COLLATE "C", whatsapp_number COLLATE "C", photo_url COLLATE "C")
+		      IS DISTINCT FROM ROW(CAST($1 AS text), CAST($2 AS text), CAST($3 AS text), CAST($4 AS text), CAST($5 AS text), CAST($6 AS text), CAST($7 AS text), CAST($8 AS text))
+	`), firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo), memberID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -333,7 +347,7 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	affected, _ := result.RowsAffected()
 	if req.WhatsAppNumber != nil || req.Phone != nil {
-		_, err = tx.ExecContext(r.Context(), `UPDATE restaurant_members SET whatsapp_verified_at=NULL, whatsapp_verification_digest=NULL, whatsapp_verification_expires_at=NULL, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=?`, memberID, a.ActiveRestaurantID)
+		_, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE restaurant_members SET whatsapp_verified_at=NULL, whatsapp_verification_digest=NULL, whatsapp_verification_expires_at=NULL, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=?`), memberID, a.ActiveRestaurantID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "No se pudo reiniciar la verificacion de WhatsApp")
 			return
@@ -347,12 +361,17 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO member_contracts (restaurant_member_id, restaurant_id, weekly_hours)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			weekly_hours = VALUES(weekly_hours)
-	`, memberID, a.ActiveRestaurantID, weekly); err != nil {
+	`, `
+		INSERT INTO member_contracts (restaurant_member_id, restaurant_id, weekly_hours)
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_member_id) DO UPDATE SET
+			weekly_hours = EXCLUDED.weekly_hours
+	`), memberID, a.ActiveRestaurantID, weekly); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando contrato")
 		return
 	}
@@ -393,7 +412,7 @@ func boRoleLabelOrUnknown(role string) string {
 // member with neither resolves to "" / 0.
 func (s *Server) memberRoleImportance(ctx context.Context, restaurantID, memberID int) (string, int, error) {
 	var role sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(
 			ur.role,
 			(
@@ -409,7 +428,7 @@ func (s *Server) memberRoleImportance(ctx context.Context, restaurantID, memberI
 			ON ur.user_id = m.bo_user_id AND ur.restaurant_id = m.restaurant_id
 		WHERE m.id = ? AND m.restaurant_id = ?
 		LIMIT 1
-	`, memberID, restaurantID).Scan(&role)
+	`), memberID, restaurantID).Scan(&role)
 	if err != nil {
 		return "", 0, err
 	}
@@ -491,11 +510,11 @@ func (s *Server) handleBOMemberDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.ExecContext(r.Context(), `
+	result, err := tx.ExecContext(r.Context(), portableSQL(`
 		UPDATE restaurant_members
 		SET is_active = 0
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, memberID, a.ActiveRestaurantID)
+	`), memberID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando miembro")
 		return
@@ -512,35 +531,47 @@ func (s *Server) handleBOMemberDelete(w http.ResponseWriter, r *http.Request) {
 	// Cortar el acceso: sin fila en bo_user_restaurants la sesion activa deja
 	// de resolver rol para este restaurante (ver loadBOSessionAuth).
 	if current.BOUserID != nil {
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			DELETE FROM bo_user_restaurants
 			WHERE user_id = ? AND restaurant_id = ?
-		`, *current.BOUserID, a.ActiveRestaurantID); err != nil {
+		`), *current.BOUserID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error retirando acceso del miembro")
 			return
 		}
 	}
 
 	// Invalidar invitaciones pendientes para que no recreen el acceso.
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_member_invitation_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'member_deleted'
 		WHERE restaurant_id = ? AND member_id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
-	`, a.ActiveRestaurantID, memberID); err != nil {
+	`, `
+		UPDATE bo_member_invitation_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'member_deleted'
+		WHERE restaurant_id = ? AND member_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+	`), a.ActiveRestaurantID, memberID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error invalidando invitaciones")
 		return
 	}
 
 	// Invalidar resets de contrasena pendientes.
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_password_reset_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'member_deleted'
 		WHERE restaurant_id = ? AND member_id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
-	`, a.ActiveRestaurantID, memberID); err != nil {
+	`, `
+		UPDATE bo_password_reset_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'member_deleted'
+		WHERE restaurant_id = ? AND member_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+	`), a.ActiveRestaurantID, memberID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error invalidando resets de contrasena")
 		return
 	}
@@ -582,11 +613,11 @@ func (s *Server) handleBOMemberPhonePut(w http.ResponseWriter, r *http.Request) 
 	}
 	phone := "+" + normalized
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE restaurant_members
 		SET phone = ?, whatsapp_number = ?, whatsapp_verified_at = NULL, whatsapp_verification_digest = NULL, whatsapp_verification_expires_at = NULL, whatsapp_verification_attempts = 0
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, phone, phone, memberID, a.ActiveRestaurantID)
+	`), phone, phone, memberID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar el telefono")
 		return
@@ -1132,7 +1163,7 @@ func (s *Server) handleBOMemberTableData(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) getBOMemberByID(ctx context.Context, restaurantID, memberID int) (boMember, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT
 			m.id,
 			m.bo_user_id,
@@ -1149,7 +1180,7 @@ func (s *Server) getBOMemberByID(ctx context.Context, restaurantID, memberID int
 		LEFT JOIN member_contracts c ON c.restaurant_member_id = m.id
 		WHERE m.restaurant_id = ? AND m.id = ? AND m.is_active = 1
 		LIMIT 1
-	`, restaurantID, memberID)
+	`), restaurantID, memberID)
 	return scanBOMember(row)
 }
 
@@ -1221,12 +1252,17 @@ func (s *Server) queryBOMemberPoints(ctx context.Context, restaurantID, memberID
 }
 
 func (s *Server) queryBOMemberMinutesByDate(ctx context.Context, restaurantID, memberID int, start, end time.Time) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT work_date, COALESCE(SUM(minutes_worked), 0) AS total_minutes
 		FROM member_time_entries FORCE INDEX (idx_member_time_entries_rest_member_date)
 		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date BETWEEN ? AND ?
 		GROUP BY work_date
-	`, restaurantID, memberID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	`, `
+		SELECT work_date, COALESCE(SUM(minutes_worked), 0) AS total_minutes
+		FROM member_time_entries
+		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date BETWEEN ? AND ?
+		GROUP BY work_date
+	`), restaurantID, memberID, start.Format("2006-01-02"), end.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
 	}
@@ -1253,11 +1289,11 @@ func (s *Server) queryBOMemberMinutesByDate(ctx context.Context, restaurantID, m
 
 func (s *Server) queryBOMemberWorkedHours(ctx context.Context, restaurantID, memberID int, start, end time.Time) (float64, error) {
 	var minutes sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(SUM(minutes_worked), 0)
 		FROM member_time_entries
 		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date BETWEEN ? AND ?
-	`, restaurantID, memberID, start.Format("2006-01-02"), end.Format("2006-01-02")).Scan(&minutes)
+	`), restaurantID, memberID, start.Format("2006-01-02"), end.Format("2006-01-02")).Scan(&minutes)
 	if err != nil {
 		return 0, err
 	}

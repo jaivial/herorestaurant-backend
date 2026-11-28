@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func posReportRange(r *http.Request) (string, string, bool) {
@@ -32,7 +33,7 @@ func (s *Server) handleBOPOSSalesReport(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT v.service_date,v.service_type,COUNT(DISTINCT t.id),COALESCE(SUM(t.total_gross_cents),0),COALESCE(SUM(t.refunded_cents),0),COALESCE((SELECT SUM(v2.covers) FROM pos_visits v2 WHERE v2.restaurant_id=v.restaurant_id AND v2.service_date=v.service_date AND v2.service_type=v.service_type AND v2.channel='DINE_IN' AND v2.status='CLOSED'),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') GROUP BY v.restaurant_id,v.service_date,v.service_type ORDER BY v.service_date DESC,v.service_type`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT v.service_date,v.service_type,COUNT(DISTINCT t.id),COALESCE(SUM(t.total_gross_cents),0),COALESCE(SUM(t.refunded_cents),0),COALESCE((SELECT SUM(v2.covers) FROM pos_visits v2 WHERE v2.restaurant_id=v.restaurant_id AND v2.service_date=v.service_date AND v2.service_type=v.service_type AND v2.channel='DINE_IN' AND v2.status='CLOSED'),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') GROUP BY v.restaurant_id,v.service_date,v.service_type ORDER BY v.service_date DESC,v.service_type`, `SELECT v.service_date,CAST(v.service_type AS text),COUNT(DISTINCT t.id),COALESCE(SUM(t.total_gross_cents),0),COALESCE(SUM(t.refunded_cents),0),COALESCE((SELECT SUM(v2.covers) FROM pos_visits v2 WHERE v2.restaurant_id=v.restaurant_id AND v2.service_date=v.service_date AND v2.service_type=v.service_type AND v2.channel='DINE_IN' AND v2.status='CLOSED'),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') GROUP BY v.restaurant_id,v.service_date,v.service_type ORDER BY v.service_date DESC,v.service_type`), a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading sales report")
 		return
@@ -62,7 +63,7 @@ func (s *Server) handleBOPOSCardReconciliation(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT v.service_date,COUNT(*),COALESCE(SUM(p.amount_cents+p.tip_cents),0),SUM(CASE WHEN p.provider_reference IS NOT NULL AND p.provider_reference<>'' THEN 1 ELSE 0 END),COUNT(DISTINCT p.provider_reference),COALESCE(SUM(cr.amount_cents),0) FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN (SELECT r.restaurant_id,rv.service_date,SUM(r.amount_cents) AS amount_cents FROM pos_refunds r JOIN pos_tickets rt ON rt.restaurant_id=r.restaurant_id AND rt.id=r.ticket_id JOIN pos_visits rv ON rv.restaurant_id=rt.restaurant_id AND rv.id=rt.visit_id WHERE r.status='COMPLETED' AND r.payment_method='CARD' GROUP BY r.restaurant_id,rv.service_date) cr ON cr.restaurant_id=v.restaurant_id AND cr.service_date=v.service_date WHERE p.restaurant_id=? AND p.method='CARD' AND p.status='CAPTURED' AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date ORDER BY v.service_date DESC`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT v.service_date,COUNT(*),COALESCE(SUM(p.amount_cents+p.tip_cents),0),SUM(CASE WHEN p.provider_reference IS NOT NULL AND p.provider_reference<>'' THEN 1 ELSE 0 END),COUNT(DISTINCT p.provider_reference),COALESCE(SUM(cr.amount_cents),0) FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN (SELECT r.restaurant_id,rv.service_date,SUM(r.amount_cents) AS amount_cents FROM pos_refunds r JOIN pos_tickets rt ON rt.restaurant_id=r.restaurant_id AND rt.id=r.ticket_id JOIN pos_visits rv ON rv.restaurant_id=rt.restaurant_id AND rv.id=rt.visit_id WHERE r.status='COMPLETED' AND r.payment_method='CARD' GROUP BY r.restaurant_id,rv.service_date) cr ON cr.restaurant_id=v.restaurant_id AND cr.service_date=v.service_date WHERE p.restaurant_id=? AND p.method='CARD' AND p.status='CAPTURED' AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date ORDER BY v.service_date DESC`, `SELECT v.service_date,COUNT(*),COALESCE(SUM(p.amount_cents+p.tip_cents),0),SUM(CASE WHEN p.provider_reference IS NOT NULL AND rtrim(p.provider_reference, ' ') COLLATE "C"<>'' THEN 1 ELSE 0 END),COUNT(DISTINCT p.provider_reference),COALESCE(SUM(cr.amount_cents),0) FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN (SELECT r.restaurant_id,rv.service_date,SUM(r.amount_cents) AS amount_cents FROM pos_refunds r JOIN pos_tickets rt ON rt.restaurant_id=r.restaurant_id AND rt.id=r.ticket_id JOIN pos_visits rv ON rv.restaurant_id=rt.restaurant_id AND rv.id=rt.visit_id WHERE r.status='COMPLETED' AND r.payment_method='CARD' GROUP BY r.restaurant_id,rv.service_date) cr ON cr.restaurant_id=v.restaurant_id AND cr.service_date=v.service_date WHERE p.restaurant_id=? AND p.method='CARD' AND p.status='CAPTURED' AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date ORDER BY v.service_date DESC`), a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading card reconciliation")
 		return
@@ -93,7 +94,7 @@ func (s *Server) handleBOPOSStockReport(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT s.status,COUNT(*),COALESCE(SUM(s.qty_base_planned),0) FROM pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE s.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY s.status ORDER BY s.status`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT s.status,COUNT(*),COALESCE(SUM(s.qty_base_planned),0) FROM pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE s.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY s.status ORDER BY s.status`, `SELECT CAST(s.status AS text),COUNT(*),COALESCE(SUM(s.qty_base_planned),0) FROM pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE s.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY s.status ORDER BY s.status`), a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading POS stock report")
 		return
@@ -115,7 +116,7 @@ func (s *Server) handleBOPOSStockReport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var exceptions int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`, a.ActiveRestaurantID).Scan(&exceptions)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`), a.ActiveRestaurantID).Scan(&exceptions)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "from": from, "to": to, "openExceptions": exceptions, "items": items})
 }
 
@@ -135,7 +136,7 @@ func (s *Server) handleBOPOSCoversRebuild(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(r.Context(), `SELECT DISTINCT DATE_FORMAT(service_date,'%Y-%m-%d'),service_type FROM pos_visits WHERE restaurant_id=? AND service_date BETWEEN ? AND ? UNION SELECT DISTINCT DATE_FORMAT(service_date,'%Y-%m-%d'),service_type FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date BETWEEN ? AND ?`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID, from, to)
+	rows, err := tx.QueryContext(r.Context(), nativeSQL(`SELECT DISTINCT DATE_FORMAT(service_date,'%Y-%m-%d'),service_type FROM pos_visits WHERE restaurant_id=? AND service_date BETWEEN ? AND ? UNION SELECT DISTINCT DATE_FORMAT(service_date,'%Y-%m-%d'),service_type FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date BETWEEN ? AND ?`, `SELECT DISTINCT to_char(service_date,'YYYY-MM-DD'),CAST(service_type AS text) FROM pos_visits WHERE restaurant_id=? AND service_date BETWEEN ? AND ? UNION SELECT DISTINCT to_char(service_date,'YYYY-MM-DD'),CAST(service_type AS text) FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date BETWEEN ? AND ?`), a.ActiveRestaurantID, from, to, a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading cover keys")
 		return
@@ -171,7 +172,7 @@ func (s *Server) handleBOPOSCoversRebuild(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleBOPOSStockExceptionsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT e.id,e.ticket_id,e.ticket_line_id,e.code,e.status,e.message,e.created_at,COALESCE(l.product_name_snapshot,'') FROM pos_stock_exceptions e LEFT JOIN pos_ticket_lines l ON l.restaurant_id=e.restaurant_id AND l.id=e.ticket_line_id WHERE e.restaurant_id=? ORDER BY e.status='OPEN' DESC,e.created_at DESC LIMIT 500`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT e.id,e.ticket_id,e.ticket_line_id,e.code,e.status,e.message,e.created_at,COALESCE(l.product_name_snapshot,'') FROM pos_stock_exceptions e LEFT JOIN pos_ticket_lines l ON l.restaurant_id=e.restaurant_id AND l.id=e.ticket_line_id WHERE e.restaurant_id=? ORDER BY e.status='OPEN' DESC,e.created_at DESC LIMIT 500`, `SELECT e.id,e.ticket_id,e.ticket_line_id,CAST(e.code AS text),CAST(e.status AS text),e.message,e.created_at,COALESCE(l.product_name_snapshot,'') FROM pos_stock_exceptions e LEFT JOIN pos_ticket_lines l ON l.restaurant_id=e.restaurant_id AND l.id=e.ticket_line_id WHERE e.restaurant_id=? ORDER BY e.status='OPEN' DESC,e.created_at DESC LIMIT 500`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading stock exceptions")
 		return
@@ -220,10 +221,13 @@ func (s *Server) handleBOPOSStockExceptionsReplay(w http.ResponseWriter, r *http
 		var ticketID, lineID, productID int64
 		var quantity float64
 		var status string
-		if err = tx.QueryRowContext(r.Context(), `SELECT e.ticket_id,e.ticket_line_id,e.status,l.pos_product_id,l.quantity FROM pos_stock_exceptions e JOIN pos_ticket_lines l ON l.restaurant_id=e.restaurant_id AND l.id=e.ticket_line_id WHERE e.restaurant_id=? AND e.id=? FOR UPDATE`, a.ActiveRestaurantID, exceptionID).Scan(&ticketID, &lineID, &status, &productID, &quantity); err != nil || status != "OPEN" {
+		// Any error skips the id and the tx continues: savepoint on PG.
+		if err = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			return tx.QueryRowContext(r.Context(), nativeSQL(`SELECT e.ticket_id,e.ticket_line_id,e.status,l.pos_product_id,l.quantity FROM pos_stock_exceptions e JOIN pos_ticket_lines l ON l.restaurant_id=e.restaurant_id AND l.id=e.ticket_line_id WHERE e.restaurant_id=? AND e.id=? FOR UPDATE`, `SELECT e.ticket_id,e.ticket_line_id,CAST(e.status AS text),l.pos_product_id,l.quantity FROM pos_stock_exceptions e JOIN pos_ticket_lines l ON l.restaurant_id=e.restaurant_id AND l.id=e.ticket_line_id WHERE e.restaurant_id=? AND e.id=? FOR UPDATE`), a.ActiveRestaurantID, exceptionID).Scan(&ticketID, &lineID, &status, &productID, &quantity)
+		}); err != nil || status != "OPEN" {
 			continue
 		}
-		ruleRows, queryErr := tx.QueryContext(r.Context(), `SELECT r.id,r.stock_item_id,r.warehouse_id,r.qty_base_per_sale,i.is_tracked,i.deduction_source FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id WHERE r.restaurant_id=? AND r.pos_product_id=? AND r.is_active=1 ORDER BY r.warehouse_id,r.stock_item_id`, a.ActiveRestaurantID, productID)
+		ruleRows, queryErr := tx.QueryContext(r.Context(), nativeSQL(`SELECT r.id,r.stock_item_id,r.warehouse_id,r.qty_base_per_sale,i.is_tracked,i.deduction_source FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id WHERE r.restaurant_id=? AND r.pos_product_id=? AND r.is_active=1 ORDER BY r.warehouse_id,r.stock_item_id`, `SELECT r.id,r.stock_item_id,r.warehouse_id,r.qty_base_per_sale,i.is_tracked,CAST(i.deduction_source AS text) FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id WHERE r.restaurant_id=? AND r.pos_product_id=? AND r.is_active=1 ORDER BY r.warehouse_id,r.stock_item_id`), a.ActiveRestaurantID, productID)
 		if queryErr != nil {
 			httpx.WriteError(w, 500, "Error loading replay mapping")
 			return
@@ -258,13 +262,16 @@ func (s *Server) handleBOPOSStockExceptionsReplay(w http.ResponseWriter, r *http
 		ruleRows.Close()
 		snapshots := []posStockSnapshot{}
 		for _, x := range candidates {
-			res, insertErr := tx.ExecContext(r.Context(), `INSERT IGNORE INTO pos_ticket_line_stock (restaurant_id,ticket_id,ticket_line_id,stock_rule_id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, lineID, x.RuleID, x.ItemID, x.WarehouseID, x.QuantitySold, x.QtyBase, x.Status)
+			// repair-ignore2: duplicate snapshot key -> 0 rows on both (MySQL ODKU
+			// no-op: no clientFoundRows, so an unchanged row reports 0; PG DO
+			// NOTHING). Range/FK errors are no longer downgraded on MySQL.
+			snapshotID, n, insertErr := sqldb.InsertSelectID(r.Context(), sqlDialect, tx, nativeSQL(`INSERT INTO pos_ticket_line_stock (restaurant_id,ticket_id,ticket_line_id,stock_rule_id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=id`, `INSERT INTO pos_ticket_line_stock (restaurant_id,ticket_id,ticket_line_id,stock_rule_id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (restaurant_id,ticket_line_id,stock_item_id,warehouse_id) DO NOTHING`), "id", a.ActiveRestaurantID, ticketID, lineID, x.RuleID, x.ItemID, x.WarehouseID, x.QuantitySold, x.QtyBase, x.Status)
 			if insertErr != nil {
 				httpx.WriteError(w, 500, "Error saving replay snapshot")
 				return
 			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				x.SnapshotID, _ = res.LastInsertId()
+			if n > 0 {
+				x.SnapshotID = snapshotID
 				snapshots = append(snapshots, x)
 			}
 		}
@@ -275,15 +282,20 @@ func (s *Server) handleBOPOSStockExceptionsReplay(w http.ResponseWriter, r *http
 			httpx.WriteError(w, 500, "Error applying replay stock")
 			return
 		}
-		_, err = tx.ExecContext(r.Context(), `UPDATE pos_stock_exceptions SET status='RESOLVED',resolved_by=?,resolved_at=NOW(),replay_idempotency_key=? WHERE restaurant_id=? AND id=?`, a.User.ID, in.IdempotencyKey+"-"+strconv.FormatInt(exceptionID, 10), a.ActiveRestaurantID, exceptionID)
+		_, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_stock_exceptions SET status='RESOLVED',resolved_by=?,resolved_at=NOW(),replay_idempotency_key=? WHERE restaurant_id=? AND id=?`, `UPDATE pos_stock_exceptions SET status='RESOLVED',resolved_by=?,resolved_at=date_trunc('second', statement_timestamp()),replay_idempotency_key=? WHERE restaurant_id=? AND id=?`), []any{a.User.ID, in.IdempotencyKey + "-" + strconv.FormatInt(exceptionID, 10), a.ActiveRestaurantID, exceptionID}...)
 		if err != nil {
 			httpx.WriteError(w, 500, "Error resolving stock exception")
 			return
 		}
 		var remaining int
-		_ = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND ticket_id=? AND status='OPEN'`, a.ActiveRestaurantID, ticketID).Scan(&remaining)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			return tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND ticket_id=? AND status='OPEN'`), a.ActiveRestaurantID, ticketID).Scan(&remaining)
+		})
 		if remaining == 0 {
-			_, _ = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET stock_status='COMPLETE' WHERE restaurant_id=? AND id=? AND stock_status='PARTIAL'`, a.ActiveRestaurantID, ticketID)
+			_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+				_, e := tx.ExecContext(r.Context(), portableSQL(`UPDATE pos_tickets SET stock_status='COMPLETE' WHERE restaurant_id=? AND id=? AND stock_status='PARTIAL'`), a.ActiveRestaurantID, ticketID)
+				return e
+			})
 		}
 		applied++
 	}

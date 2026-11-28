@@ -159,10 +159,13 @@ func invoiceNumberFormatHasSequence(f invoiceNumberFormat) bool {
 // maxIssuedInvoiceSequence returns the highest sequence already used by the
 // restaurant, so a new series never repeats a number that was issued before.
 func maxIssuedInvoiceSequence(ctx context.Context, tx *sql.Tx, restaurantID, year int, byYear bool) (int, error) {
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT invoice_number FROM invoices
 		WHERE restaurant_id = ? AND invoice_number IS NOT NULL AND invoice_number <> ''
-	`, restaurantID)
+	`, `
+		SELECT invoice_number FROM invoices
+		WHERE restaurant_id = ? AND invoice_number IS NOT NULL AND rtrim(invoice_number, ' ') COLLATE "C" <> ''
+	`), restaurantID)
 	if err != nil {
 		return 0, err
 	}
@@ -189,12 +192,14 @@ func maxIssuedInvoiceSequence(ctx context.Context, tx *sql.Tx, restaurantID, yea
 // The row is locked for the rest of the transaction, so the sequence is
 // reserved atomically with the invoice that uses it.
 func (s *Server) ensureInvoiceNumberSettingsRow(ctx context.Context, tx *sql.Tx, restaurantID, year int) (invoiceNumberSettings, error) {
-	settings, err := scanInvoiceNumberSettings(tx.QueryRowContext(ctx, `
+	// Absent row: MySQL RR takes a gap lock here; PG locks nothing, the
+	// ON CONFLICT below serialises the insert instead (gap-lock gate).
+	settings, err := scanInvoiceNumberSettings(tx.QueryRowContext(ctx, portableSQL(`
 		SELECT prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms
 		FROM restaurant_invoice_settings
 		WHERE restaurant_id = ? AND year = ?
 		FOR UPDATE
-	`, restaurantID, year))
+	`), restaurantID, year))
 	if err == nil {
 		return settings, nil
 	}
@@ -222,35 +227,40 @@ func (s *Server) ensureInvoiceNumberSettingsRow(ctx context.Context, tx *sql.Tx,
 	if maxSeq+1 > next {
 		next = maxSeq + 1
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_invoice_settings
 			(restaurant_id, year, prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE next_number = GREATEST(next_number, ?)
-	`, restaurantID, year, base.Format.Prefix, base.Format.Suffix, base.Format.Format,
+	`, `
+		INSERT INTO restaurant_invoice_settings
+			(restaurant_id, year, prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id, year) DO UPDATE SET next_number = GREATEST(restaurant_invoice_settings.next_number, CAST(? AS integer))
+	`), restaurantID, year, base.Format.Prefix, base.Format.Suffix, base.Format.Format,
 		base.Format.StartingNumber, base.Format.PaddingZeros, next, base.DefaultPdfTemplate, base.DefaultPaymentTerms,
 		next); err != nil {
 		return base, err
 	}
-	return scanInvoiceNumberSettings(tx.QueryRowContext(ctx, `
+	return scanInvoiceNumberSettings(tx.QueryRowContext(ctx, portableSQL(`
 		SELECT prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms
 		FROM restaurant_invoice_settings
 		WHERE restaurant_id = ? AND year = ?
 		FOR UPDATE
-	`, restaurantID, year))
+	`), restaurantID, year))
 }
 
 // loadLatestInvoiceNumberSettings returns the settings of the most recent
 // series of the restaurant, so a new year inherits the format the operator
 // configured instead of falling back to the defaults.
 func (s *Server) loadLatestInvoiceNumberSettings(ctx context.Context, tx *sql.Tx, restaurantID int) (invoiceNumberSettings, error) {
-	settings, err := scanInvoiceNumberSettings(tx.QueryRowContext(ctx, `
+	settings, err := scanInvoiceNumberSettings(tx.QueryRowContext(ctx, portableSQL(`
 		SELECT prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms
 		FROM restaurant_invoice_settings
 		WHERE restaurant_id = ?
 		ORDER BY year DESC
 		LIMIT 1
-	`, restaurantID))
+	`), restaurantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return defaultInvoiceNumberSettings(), nil
 	}
@@ -262,12 +272,17 @@ func (s *Server) loadLatestInvoiceNumberSettings(ctx context.Context, tx *sql.Tx
 // is left without the number that identifies it. It only touches the
 // invoices without a number, so it is idempotent.
 func (s *Server) backfillInvoiceNumbers(ctx context.Context, tx *sql.Tx, restaurantID int, format invoiceNumberFormat) error {
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT id, YEAR(invoice_date), invoice_number
 		FROM invoices
 		WHERE restaurant_id = ?
 		ORDER BY id
-	`, restaurantID)
+	`, `
+		SELECT id, CAST(EXTRACT(YEAR FROM invoice_date) AS integer), invoice_number
+		FROM invoices
+		WHERE restaurant_id = ?
+		ORDER BY id
+	`), restaurantID)
 	if err != nil {
 		return err
 	}
@@ -307,9 +322,9 @@ func (s *Server) backfillInvoiceNumbers(ctx context.Context, tx *sql.Tx, restaur
 		for _, id := range ids {
 			seq++
 			number := formatInvoiceNumber(format, seq, y)
-			if _, err := tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, portableSQL(`
 				UPDATE invoices SET invoice_number = ? WHERE id = ? AND restaurant_id = ?
-			`, number, id, restaurantID); err != nil {
+			`), number, id, restaurantID); err != nil {
 				return err
 			}
 		}
@@ -337,9 +352,9 @@ func (s *Server) backfillInvoiceNumbersTx(ctx context.Context, restaurantID int,
 // not exist yet, so it is cheap enough to call on every read.
 func (s *Server) ensureInvoiceNumbersReady(ctx context.Context, restaurantID, year int) error {
 	var exists int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT 1 FROM restaurant_invoice_settings WHERE restaurant_id = ? AND year = ? LIMIT 1
-	`, restaurantID, year).Scan(&exists)
+	`), restaurantID, year).Scan(&exists)
 	if err == nil {
 		return nil
 	}
@@ -398,9 +413,9 @@ func (s *Server) reserveInvoiceNumber(ctx context.Context, tx *sql.Tx, restauran
 		return "", err
 	}
 	number := formatInvoiceNumber(settings.Format, settings.NextNumber, year)
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, portableSQL(`
 		UPDATE restaurant_invoice_settings SET next_number = ? WHERE restaurant_id = ? AND year = ?
-	`, settings.NextNumber+1, restaurantID, year); err != nil {
+	`), settings.NextNumber+1, restaurantID, year); err != nil {
 		return "", err
 	}
 	return number, nil
@@ -441,14 +456,21 @@ func (s *Server) loadInvoiceNumberSettings(ctx context.Context, restaurantID, ye
 // saveInvoiceNumberSettings stores the numbering settings of the restaurant
 // for the given year.
 func (s *Server) saveInvoiceNumberSettings(ctx context.Context, restaurantID, year int, settings invoiceNumberSettings) (invoiceNumberSettings, error) {
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_invoice_settings
 			(restaurant_id, year, prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			prefix = ?, suffix = ?, format = ?, starting_number = ?, padding_zeros = ?,
 			next_number = ?, default_pdf_template = ?, default_payment_terms = ?
-	`, restaurantID, year, settings.Format.Prefix, settings.Format.Suffix, settings.Format.Format,
+	`, `
+		INSERT INTO restaurant_invoice_settings
+			(restaurant_id, year, prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id, year) DO UPDATE SET
+			prefix = ?, suffix = ?, format = ?, starting_number = ?, padding_zeros = ?,
+			next_number = ?, default_pdf_template = ?, default_payment_terms = ?
+	`), restaurantID, year, settings.Format.Prefix, settings.Format.Suffix, settings.Format.Format,
 		settings.Format.StartingNumber, settings.Format.PaddingZeros, settings.NextNumber,
 		settings.DefaultPdfTemplate, settings.DefaultPaymentTerms,
 		settings.Format.Prefix, settings.Format.Suffix, settings.Format.Format,

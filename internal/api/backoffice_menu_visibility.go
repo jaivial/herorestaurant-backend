@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strings"
 
@@ -45,10 +46,20 @@ func (s *Server) ensureMenuVisibilityRows(ctxCtx *http.Request, restaurantID int
 	// Best-effort: keep it idempotent.
 	ctx := ctxCtx.Context()
 	for _, d := range boDefaultMenuVisibility {
-		_, _ = s.db.ExecContext(ctx, `
-			INSERT IGNORE INTO menu_visibility (restaurant_id, menu_key, menu_name, is_active)
+		// IGNORE can only skip the (restaurant_id, menu_key) duplicate here: no FK
+		// on the table and the constant key/name fit varchar(50)/(100).
+		// repair-ignore3: duplicate-only no-op; errors logged, not dropped.
+		if _, err := s.db.ExecContext(ctx, nativeSQL(`
+			INSERT INTO menu_visibility (restaurant_id, menu_key, menu_name, is_active)
 			VALUES (?, ?, ?, 1)
-		`, restaurantID, d.Key, d.Name)
+			ON DUPLICATE KEY UPDATE menu_key = menu_key
+		`, `
+			INSERT INTO menu_visibility (restaurant_id, menu_key, menu_name, is_active)
+			VALUES (?, ?, ?, 1)
+			ON CONFLICT (restaurant_id, app.norm_ascii(menu_key)) DO NOTHING
+		`), restaurantID, d.Key, d.Name); err != nil {
+			log.Printf("[menu_visibility] seed restaurant=%d key=%s: %v", restaurantID, d.Key, err)
+		}
 	}
 }
 
@@ -62,12 +73,12 @@ func (s *Server) handleBOMenuVisibilityGet(w http.ResponseWriter, r *http.Reques
 	restaurantID := a.ActiveRestaurantID
 	s.ensureMenuVisibilityRows(r, restaurantID)
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT menu_key, menu_name, is_active, updated_at
 		FROM menu_visibility
 		WHERE restaurant_id = ?
 		ORDER BY id ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menu_visibility")
 		return
@@ -136,11 +147,17 @@ func (s *Server) handleBOMenuVisibilitySet(w http.ResponseWriter, r *http.Reques
 		activeInt = 1
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	// MySQL reports CHANGED rows: an unchanged is_active gives 0 and falls into
+	// the (then duplicate-failing, ignored) INSERT; PG keeps that contract.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE menu_visibility
 		SET is_active = ?
 		WHERE restaurant_id = ? AND menu_key = ?
-	`, activeInt, restaurantID, menuKey)
+	`, `
+		UPDATE menu_visibility
+		SET is_active = $1
+		WHERE restaurant_id = $2 AND app.norm_ascii(menu_key) = app.norm_ascii($3) AND is_active IS DISTINCT FROM CAST($1 AS smallint)
+	`), activeInt, restaurantID, menuKey)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menu_visibility")
 		return
@@ -148,10 +165,10 @@ func (s *Server) handleBOMenuVisibilitySet(w http.ResponseWriter, r *http.Reques
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
 		// Row may not exist yet for this restaurant.
-		_, _ = s.db.ExecContext(r.Context(), `
+		_, _ = s.db.ExecContext(r.Context(), portableSQL(`
 			INSERT INTO menu_visibility (restaurant_id, menu_key, menu_name, is_active)
 			VALUES (?, ?, ?, ?)
-		`, restaurantID, menuKey, menuNameForKey(menuKey), activeInt)
+		`), restaurantID, menuKey, menuNameForKey(menuKey), activeInt)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

@@ -1,0 +1,9 @@
+-- vitess2-weightstring-mysql.sql: MANUAL read-only literal SELECTs (coordinator).
+-- Same hex samples as diag/samples.jsonl. No tables, no user data, no assertions.
+SELECT 'main_space' k, HEX(WEIGHT_STRING(_utf8mb4 0x6d61696e20 COLLATE utf8mb4_unicode_ci)) u_raw, HEX(WEIGHT_STRING(_utf8mb4 0x6d61696e COLLATE utf8mb4_unicode_ci)) u_raw_b, HEX(WEIGHT_STRING(_utf8mb4 0x6d61696e20 COLLATE utf8mb4_unicode_ci AS CHAR(10))) u_char10, HEX(WEIGHT_STRING(_utf8mb4 0x6d61696e COLLATE utf8mb4_unicode_ci AS CHAR(10))) u_char10_b, (_utf8mb4 0x6d61696e20 COLLATE utf8mb4_unicode_ci) = _utf8mb4 0x6d61696e eq;
+SELECT 'nbsp_trailing' k, HEX(WEIGHT_STRING(_utf8mb4 0x6dc2a0 COLLATE utf8mb4_unicode_ci)) u, (_utf8mb4 0x6dc2a0 COLLATE utf8mb4_unicode_ci) = _utf8mb4 0x6d u_eq, (_utf8mb4 0x6dc2a0 COLLATE utf8mb4_general_ci) = _utf8mb4 0x6d g_eq;
+SELECT 'a_space_combining' k, HEX(WEIGHT_STRING(_utf8mb4 0x6120cc81 COLLATE utf8mb4_unicode_ci)) u, (_utf8mb4 0x6120cc81 COLLATE utf8mb4_unicode_ci) = _utf8mb4 0x61 u_eq, (_utf8mb4 0x6120cc81 COLLATE utf8mb4_general_ci) = _utf8mb4 0x61 g_eq;
+SELECT 'a_combining_space' k, (_utf8mb4 0x61cc8120 COLLATE utf8mb4_unicode_ci) = _utf8mb4 0x61 u_eq;
+SELECT 'ae' k, HEX(WEIGHT_STRING(_utf8mb4 0xc3a6 COLLATE utf8mb4_unicode_ci)) u, HEX(WEIGHT_STRING(_utf8mb4 0x6165 COLLATE utf8mb4_unicode_ci)) u_b, (_utf8mb4 0xc3a6 COLLATE utf8mb4_unicode_ci) = _utf8mb4 0x6165 u_eq, (_utf8mb4 0xc3a6 COLLATE utf8mb4_general_ci) = _utf8mb4 0x6165 g_eq, (_utf8mb4 0xc3a6 COLLATE utf8mb4_0900_ai_ci) = _utf8mb4 0x6165 n_eq;
+SELECT 'nul_trailing' k, HEX(WEIGHT_STRING(_utf8mb4 0x6100 COLLATE utf8mb4_unicode_ci)) u, (_utf8mb4 0x6100 COLLATE utf8mb4_unicode_ci) = _utf8mb4 0x61 u_eq, (_utf8mb4 0x6100 COLLATE utf8mb4_general_ci) = _utf8mb4 0x61 g_eq;
+SELECT 'bin_space' k, (_utf8mb4 0x6d61696e20 COLLATE utf8mb4_bin) = _utf8mb4 0x6d61696e eq;

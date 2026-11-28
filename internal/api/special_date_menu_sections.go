@@ -48,7 +48,7 @@ func onlineSpecialDateMenuSections(sections []specialDateMenuSection) []specialD
 func (s *Server) specialDateMenuIsSpecialType(ctx context.Context, restaurantID int, menuID int64) bool {
 	var menuType sql.NullInt64
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, restaurantID).Scan(&menuType); err != nil {
+		portableSQL(`SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`), menuID, restaurantID).Scan(&menuType); err != nil {
 		return false
 	}
 	return IsSpecialMenuType(menuType)
@@ -59,7 +59,7 @@ func (s *Server) specialDateMenuIsSpecialType(ctx context.Context, restaurantID 
 // publicPrincipales applies the guest rule (toggle on + non-empty list).
 func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID int, specialDateMenuID, menuID int64, publicPrincipales bool) []specialDateMenuSection {
 	out := []specialDateMenuSection{}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sms.id, sms.title, sms.price, sdms.adelanto_amount, sms.position,
 		       COALESCE(sdms.online_enabled, 1)
 		FROM special_menu_sections sms
@@ -67,7 +67,7 @@ func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID i
 		  ON sdms.section_id = sms.id AND sdms.special_date_menu_id = ? AND sdms.restaurant_id = sms.restaurant_id
 		WHERE sms.restaurant_id = ? AND sms.menu_id = ?
 		ORDER BY sms.position ASC, sms.id ASC
-	`, specialDateMenuID, restaurantID, menuID)
+	`), specialDateMenuID, restaurantID, menuID)
 	if err != nil {
 		log.Printf("[special_date_section_menus_v1] load sdm=%d err=%v", specialDateMenuID, err)
 		return out
@@ -137,12 +137,20 @@ func saveSpecialDateMenuSections(ctx context.Context, tx *sql.Tx, restaurantID i
 			amount = *sec.AdelantoAmount
 		}
 		online := sec.OnlineEnabled == nil || *sec.OnlineEnabled
-		if _, err := tx.ExecContext(ctx, `
+		// PG: bare parameters in an INSERT ... SELECT list resolve to text, so
+		// they are typed to the target columns. adelanto float64 -> numeric
+		// then decimal(10,2) assignment rounding: float->decimal QA pending.
+		if _, err := tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO special_date_menu_sections (restaurant_id, special_date_menu_id, section_id, adelanto_amount, online_enabled)
 			SELECT ?, ?, sms.id, ?, ?
 			FROM special_menu_sections sms
 			WHERE sms.id = ? AND sms.menu_id = ? AND sms.restaurant_id = ?
-		`, restaurantID, specialDateMenuID, amount, boolToInt(online), sec.SectionID, menuID, restaurantID); err != nil {
+		`, `
+			INSERT INTO special_date_menu_sections (restaurant_id, special_date_menu_id, section_id, adelanto_amount, online_enabled)
+			SELECT CAST(? AS integer), CAST(? AS bigint), sms.id, CAST(? AS numeric), CAST(? AS smallint)
+			FROM special_menu_sections sms
+			WHERE sms.id = ? AND sms.menu_id = ? AND sms.restaurant_id = ?
+		`), restaurantID, specialDateMenuID, amount, boolToInt(online), sec.SectionID, menuID, restaurantID); err != nil {
 			return err
 		}
 	}

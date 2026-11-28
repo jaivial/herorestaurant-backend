@@ -38,10 +38,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
@@ -86,15 +88,28 @@ func (s *Server) ensurePOSFiscalSeries(ctx context.Context, tx *sql.Tx, key posF
 	if strings.TrimSpace(terminal) == "" {
 		terminal = posFiscalTerminalDefault
 	}
+	// repair-ignore2, fail closed on both dialects instead of IGNORE: an enum
+	// outside the ENUM became '' and an over-wide terminal_key a 64-char cut
+	// (then the SELECT below missed it). Trailing spaces are dropped only
+	// for the series scope: MySQL PAD SPACE already treated "main " as
+	// "main"; PG old-nondeterministic-collation has no pad, so without this a second series (same
+	// prefix, numbers restarting at 1) would be created.
+	if key.DocumentType != posFiscalTypeSimplificada && key.DocumentType != posFiscalTypeRectificativa {
+		return 0, fmt.Errorf("fiscal series: unknown document type")
+	}
+	terminal = strings.TrimRight(terminal, " ")
+	if !utf8.ValidString(terminal) || strings.IndexByte(terminal, 0) >= 0 || utf8.RuneCountInString(terminal) > 64 {
+		return 0, fmt.Errorf("fiscal series: invalid terminal key")
+	}
 	// INSERT IGNORE + SELECT rather than a bare INSERT: two tills booting at
 	// the same time both try to create the 'main' simplificada series, and the
 	// unique key turns the loser into a no-op instead of a 500 at checkout.
-	_, err := tx.ExecContext(ctx, `INSERT IGNORE INTO pos_fiscal_series (restaurant_id,terminal_key,series_prefix,series_type,next_number) VALUES (?,?,?,?,1)`, key.RestaurantID, terminal, prefix, key.DocumentType)
+	_, err := tx.ExecContext(ctx, nativeSQL(`INSERT IGNORE INTO pos_fiscal_series (restaurant_id,terminal_key,series_prefix,series_type,next_number) VALUES (?,?,?,?,1)`, `INSERT INTO pos_fiscal_series (restaurant_id,terminal_key,series_prefix,series_type,next_number) VALUES (?,?,?,?,1) ON CONFLICT (restaurant_id, app.norm_ascii(terminal_key), series_type) DO NOTHING`), key.RestaurantID, terminal, prefix, key.DocumentType)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM pos_fiscal_series WHERE restaurant_id=? AND terminal_key=? AND series_type=?`, key.RestaurantID, terminal, key.DocumentType).Scan(&id)
+	err = tx.QueryRowContext(ctx, nativeSQL(`SELECT id FROM pos_fiscal_series WHERE restaurant_id=? AND terminal_key=? AND series_type=?`, `SELECT id FROM pos_fiscal_series WHERE restaurant_id=? AND app.norm_ascii(terminal_key) = app.norm_ascii(?) AND series_type=?`), key.RestaurantID, terminal, key.DocumentType).Scan(&id)
 	return id, err
 }
 
@@ -215,7 +230,7 @@ func (s *Server) loadPOSFiscalTicketTotals(ctx context.Context, tx *sql.Tx, rest
 	totals := posFiscalTicketTotals{TicketID: ticketID, Breakdown: map[string]int64{}}
 	var visitID sql.NullInt64
 	var subtotal, discount, tax, total, surcharge int64
-	err := tx.QueryRowContext(ctx, `SELECT visit_id,ticket_number,subtotal_gross_cents,discount_cents,tax_cents,total_gross_cents,surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=?`, restaurantID, ticketID).
+	err := tx.QueryRowContext(ctx, portableSQL(`SELECT visit_id,ticket_number,subtotal_gross_cents,discount_cents,tax_cents,total_gross_cents,surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=?`), restaurantID, ticketID).
 		Scan(&visitID, &totals.TicketNumber, &subtotal, &discount, &tax, &total, &surcharge)
 	if err != nil {
 		return totals, err
@@ -225,9 +240,16 @@ func (s *Server) loadPOSFiscalTicketTotals(ctx context.Context, tx *sql.Tx, rest
 	totals.Surcharge = surcharge
 	totals.TotalCents = total
 
-	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(customer_name,''),COALESCE(customer_tax_id,'') FROM pos_visits WHERE restaurant_id=? AND id=?`, restaurantID, visitID.Int64).Scan(&totals.CustomerName, &totals.CustomerNIF)
+	// Ignored read inside the tx: savepoint on PG so a failure cannot abort it.
+	_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+		e := tx.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(customer_name,''),COALESCE(customer_tax_id,'') FROM pos_visits WHERE restaurant_id=? AND id=?`), restaurantID, visitID.Int64).Scan(&totals.CustomerName, &totals.CustomerNIF)
+		if errors.Is(e, sql.ErrNoRows) {
+			return nil
+		}
+		return e
+	})
 
-	rows, err := tx.QueryContext(ctx, `SELECT product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,parent_line_id,id FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, ticketID)
+	rows, err := tx.QueryContext(ctx, portableSQL(`SELECT product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,parent_line_id,id FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`), restaurantID, ticketID)
 	if err != nil {
 		return totals, err
 	}
@@ -291,7 +313,7 @@ func (s *Server) issuePOSFiscalDocument(ctx context.Context, tx *sql.Tx, params 
 	var nextNumber int64
 	var previousHash sql.NullString
 	var prefix string
-	if err = tx.QueryRowContext(ctx, `SELECT next_number,last_hash,series_prefix FROM pos_fiscal_series WHERE id=? FOR UPDATE`, seriesID).Scan(&nextNumber, &previousHash, &prefix); err != nil {
+	if err = tx.QueryRowContext(ctx, nativeSQL(`SELECT next_number,last_hash,series_prefix FROM pos_fiscal_series WHERE id=? FOR UPDATE`, `SELECT next_number,CAST(last_hash AS text),series_prefix FROM pos_fiscal_series WHERE id=? FOR UPDATE`), seriesID).Scan(&nextNumber, &previousHash, &prefix); err != nil {
 		return nil, err
 	}
 
@@ -369,25 +391,17 @@ func (s *Server) issuePOSFiscalDocument(ctx context.Context, tx *sql.Tx, params 
 	if params.VisitID > 0 {
 		visitID = params.VisitID
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,0,?)`,
-		// Store the SAME instant the hash was built from, as a naive UTC
-		// DATETIME. Passing params.IssuedAt through raw would write local time
-		// with its zone, and the chain check (which reads the column back and
-		// rebuilds the content) would compute a different hash for a document
-		// nobody touched.
-		params.RestaurantID, seriesID, nextNumber, params.DocumentType, fullNumber, key.TerminalKey, issuedAtStored, ticketID, visitID, correctsID, nullIfEmpty(params.CorrectsNumber), nullIfEmpty(params.Reason),
-		params.RestaurantName, content.IssuerTaxID, nullIfEmpty(content.CustomerName), nullIfEmpty(content.CustomerTaxID),
-		params.BaseCents, params.TaxCents, params.SurchargeCents, params.DiscountCents, params.TotalCents,
-		string(breakdownJSON), string(linesJSON), hash, nullIfEmpty(previousHash.String), params.CreatedBy)
+	// v1.9.3 LastInsertId never errors: InsertID keeps MySQL identical.
+	// issuedAtStored is already UTC (naive column): no extra adapter needed.
+	documentID, err := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,0,?)`), "id", params.RestaurantID, seriesID, nextNumber, params.DocumentType, fullNumber, key.TerminalKey, issuedAtStored, ticketID, visitID, correctsID, nullIfEmpty(params.CorrectsNumber), nullIfEmpty(params.Reason), params.RestaurantName, content.IssuerTaxID, nullIfEmpty(content.CustomerName), nullIfEmpty(content.CustomerTaxID), params.BaseCents, params.TaxCents, params.SurchargeCents, params.DiscountCents, params.TotalCents, string(breakdownJSON), string(linesJSON), hash, nullIfEmpty(previousHash.String), params.CreatedBy)
 	if err != nil {
 		return nil, err
 	}
-	documentID, _ := res.LastInsertId()
 	// Consume the number and move the chain head in the same transaction.
-	if _, err = tx.ExecContext(ctx, `UPDATE pos_fiscal_series SET next_number=next_number+1,last_hash=? WHERE id=?`, hash, seriesID); err != nil {
+	if _, err = tx.ExecContext(ctx, portableSQL(`UPDATE pos_fiscal_series SET next_number=next_number+1,last_hash=? WHERE id=?`), hash, seriesID); err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'fiscal_document',?,?,?,?)`, params.RestaurantID, documentID, params.DocumentType, canonical, params.CreatedBy); err != nil {
+	if _, err = tx.ExecContext(ctx, nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'fiscal_document',?,?,?,?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'fiscal_document',?,?,CAST(? AS jsonb),?)`), params.RestaurantID, documentID, params.DocumentType, canonical, params.CreatedBy); err != nil {
 		return nil, err
 	}
 
@@ -476,24 +490,25 @@ func (s *Server) duplicatePOSFiscalDocument(ctx context.Context, tx *sql.Tx, res
 	if copyNumber < 2 {
 		copyNumber = 2
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by)
-		SELECT restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,?,content_hash,COALESCE(previous_hash,''),0,? FROM pos_fiscal_documents WHERE restaurant_id=? AND id=? AND copy_number=1`,
+	// No source row -> 0 rows: MySQL id 0, PG InsertSelectID (0,0,nil).
+	newID, _, err := sqldb.InsertSelectID(ctx, sqlDialect, tx, nativeSQL(`INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by)
+		SELECT restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,?,content_hash,COALESCE(previous_hash,''),0,? FROM pos_fiscal_documents WHERE restaurant_id=? AND id=? AND copy_number=1`, `INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by)
+		SELECT restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,CAST(? AS integer),content_hash,COALESCE(previous_hash,''),0,CAST(? AS integer) FROM pos_fiscal_documents WHERE restaurant_id=? AND id=? AND copy_number=1`), "id",
 		copyNumber, createdBy, restaurantID, documentID)
 	if err != nil {
 		return nil, err
 	}
-	newID, _ := res.LastInsertId()
 	if newID == 0 {
 		return nil, errors.New("document not found")
 	}
 	var fullNumber, documentType, terminalKey, contentHash string
 	var ticketID, correctsID sql.NullInt64
 	var issuedAt time.Time
-	if err = tx.QueryRowContext(ctx, `SELECT full_number,document_type,terminal_key,content_hash,ticket_id,corrects_document_id,issued_at FROM pos_fiscal_documents WHERE restaurant_id=? AND id=?`, restaurantID, newID).
+	if err = tx.QueryRowContext(ctx, nativeSQL(`SELECT full_number,document_type,terminal_key,content_hash,ticket_id,corrects_document_id,issued_at FROM pos_fiscal_documents WHERE restaurant_id=? AND id=?`, `SELECT full_number,CAST(document_type AS text),terminal_key,CAST(content_hash AS text),ticket_id,corrects_document_id,issued_at FROM pos_fiscal_documents WHERE restaurant_id=? AND id=?`), restaurantID, newID).
 		Scan(&fullNumber, &documentType, &terminalKey, &contentHash, &ticketID, &correctsID, &issuedAt); err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'fiscal_document',?,'DUPLICATE',JSON_OBJECT('fullNumber',?,'copyNumber',?),?)`, restaurantID, newID, fullNumber, copyNumber, createdBy); err != nil {
+	if _, err = tx.ExecContext(ctx, nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'fiscal_document',?,'DUPLICATE',JSON_OBJECT('fullNumber',?,'copyNumber',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'fiscal_document',?,'DUPLICATE',jsonb_build_object('fullNumber',CAST(? AS text),'copyNumber',CAST(? AS integer)),?)`), restaurantID, newID, fullNumber, copyNumber, createdBy); err != nil {
 		return nil, err
 	}
 	out := map[string]any{
@@ -527,7 +542,7 @@ func (s *Server) duplicatePOSFiscalDocument(ctx context.Context, tx *sql.Tx, res
 // content from the stored columns and compares. A mismatch therefore means the
 // row itself changed, which is the case the check exists for.
 func (s *Server) verifyPOSFiscalChain(ctx context.Context, restaurantID, seriesID int64) (map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.series_number,d.full_number,d.document_type,d.terminal_key,d.issued_at,COALESCE(t.ticket_number,''),d.issuer_name,d.issuer_tax_id,COALESCE(d.customer_name,''),COALESCE(d.customer_tax_id,''),d.base_cents,d.tax_cents,d.surcharge_cents,d.discount_cents,d.total_cents,COALESCE(d.lines_json,''),COALESCE(d.vat_breakdown_json,''),COALESCE(d.correction_reason,''),d.copy_number,d.content_hash,COALESCE(d.previous_hash,''),COALESCE(d.corrects_number,''),d.corrects_document_id FROM pos_fiscal_documents d LEFT JOIN pos_tickets t ON t.id=d.ticket_id AND t.restaurant_id=d.restaurant_id WHERE d.restaurant_id=? AND d.series_id=? ORDER BY d.series_number, d.copy_number, d.id`, restaurantID, seriesID)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT d.id,d.series_number,d.full_number,d.document_type,d.terminal_key,d.issued_at,COALESCE(t.ticket_number,''),d.issuer_name,d.issuer_tax_id,COALESCE(d.customer_name,''),COALESCE(d.customer_tax_id,''),d.base_cents,d.tax_cents,d.surcharge_cents,d.discount_cents,d.total_cents,COALESCE(d.lines_json,''),COALESCE(d.vat_breakdown_json,''),COALESCE(d.correction_reason,''),d.copy_number,d.content_hash,COALESCE(d.previous_hash,''),COALESCE(d.corrects_number,''),d.corrects_document_id FROM pos_fiscal_documents d LEFT JOIN pos_tickets t ON t.id=d.ticket_id AND t.restaurant_id=d.restaurant_id WHERE d.restaurant_id=? AND d.series_id=? ORDER BY d.series_number, d.copy_number, d.id`, `SELECT d.id,d.series_number,d.full_number,CAST(d.document_type AS text),d.terminal_key,d.issued_at,COALESCE(t.ticket_number,''),d.issuer_name,d.issuer_tax_id,COALESCE(d.customer_name,''),COALESCE(d.customer_tax_id,''),d.base_cents,d.tax_cents,d.surcharge_cents,d.discount_cents,d.total_cents,COALESCE(d.lines_json,''),COALESCE(d.vat_breakdown_json,''),COALESCE(d.correction_reason,''),d.copy_number,CAST(d.content_hash AS text),COALESCE(CAST(d.previous_hash AS text),''),COALESCE(d.corrects_number,''),d.corrects_document_id FROM pos_fiscal_documents d LEFT JOIN pos_tickets t ON t.id=d.ticket_id AND t.restaurant_id=d.restaurant_id WHERE d.restaurant_id=? AND d.series_id=? ORDER BY d.series_number, d.copy_number, d.id`), restaurantID, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +658,7 @@ func (s *Server) verifyPOSFiscalChain(ctx context.Context, restaurantID, seriesI
 // terminal.
 func (s *Server) handleBOPOSFiscalSeries(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,terminal_key,series_prefix,series_type,next_number,COALESCE(last_hash,''),is_active FROM pos_fiscal_series WHERE restaurant_id=? ORDER BY terminal_key,series_type`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,terminal_key,series_prefix,series_type,next_number,COALESCE(last_hash,''),is_active FROM pos_fiscal_series WHERE restaurant_id=? ORDER BY terminal_key,series_type`, `SELECT id,terminal_key,series_prefix,CAST(series_type AS text),next_number,COALESCE(CAST(last_hash AS text),''),is_active FROM pos_fiscal_series WHERE restaurant_id=? ORDER BY terminal_key,series_type`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading fiscal series")
 		return
@@ -659,7 +674,7 @@ func (s *Server) handleBOPOSFiscalSeries(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		var docs int64
-		s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_fiscal_documents WHERE restaurant_id=? AND series_id=?`, a.ActiveRestaurantID, id).Scan(&docs)
+		s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_fiscal_documents WHERE restaurant_id=? AND series_id=?`), a.ActiveRestaurantID, id).Scan(&docs)
 		series = append(series, map[string]any{
 			"id": id, "terminalKey": terminal, "prefix": prefix, "documentType": seriesType,
 			"nextNumber": nextNumber, "lastHash": lastHash, "isActive": active == 1, "issued": docs,
@@ -716,7 +731,14 @@ func (s *Server) handleBOPOSFiscalDocument(w http.ResponseWriter, r *http.Reques
 	// make impossible.
 	var existingID int64
 	var existingType string
-	_ = tx.QueryRowContext(r.Context(), `SELECT id,document_type FROM pos_fiscal_documents WHERE restaurant_id=? AND ticket_id=? AND corrects_document_id IS NULL ORDER BY id LIMIT 1`, a.ActiveRestaurantID, ticketID).Scan(&existingID, &existingType)
+	// Ignored read inside the tx: savepoint on PG.
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		e := tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id,document_type FROM pos_fiscal_documents WHERE restaurant_id=? AND ticket_id=? AND corrects_document_id IS NULL ORDER BY id LIMIT 1`, `SELECT id,CAST(document_type AS text) FROM pos_fiscal_documents WHERE restaurant_id=? AND ticket_id=? AND corrects_document_id IS NULL ORDER BY id LIMIT 1`), a.ActiveRestaurantID, ticketID).Scan(&existingID, &existingType)
+		if errors.Is(e, sql.ErrNoRows) {
+			return nil
+		}
+		return e
+	})
 
 	var document map[string]any
 	switch in.Action {
@@ -757,7 +779,7 @@ func (s *Server) handleBOPOSFiscalDocument(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		var status string
-		if err = tx.QueryRowContext(r.Context(), `SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, ticketID).Scan(&status); err != nil {
+		if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, `SELECT CAST(status AS text) FROM pos_tickets WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, ticketID).Scan(&status); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Ticket not found")
 			return
 		}
@@ -792,7 +814,7 @@ func (s *Server) issueRectifyingInvoice(ctx context.Context, tx *sql.Tx, restaur
 	}
 	var correctsID int64
 	var correctsNumber string
-	if err := tx.QueryRowContext(ctx, `SELECT id,full_number FROM pos_fiscal_documents WHERE restaurant_id=? AND ticket_id=? AND corrects_document_id IS NULL ORDER BY id LIMIT 1`, restaurantID, ticketID).Scan(&correctsID, &correctsNumber); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT id,full_number FROM pos_fiscal_documents WHERE restaurant_id=? AND ticket_id=? AND corrects_document_id IS NULL ORDER BY id LIMIT 1`), restaurantID, ticketID).Scan(&correctsID, &correctsNumber); err != nil {
 		return nil, errors.New("this sale has no simplified invoice to correct; issue one first")
 	}
 	// Refund amounts are read from the recorded refund, never from the request,
@@ -804,12 +826,12 @@ func (s *Server) issueRectifyingInvoice(ctx context.Context, tx *sql.Tx, restaur
 		args = append(args, refundID)
 	}
 	var refundTotal int64
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&refundTotal); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(query), args...).Scan(&refundTotal); err != nil {
 		return nil, errors.New("no completed refund to rectify")
 	}
 	var ticketTotal, ticketTax int64
 	var ticketNumber string
-	if err := tx.QueryRowContext(ctx, `SELECT total_gross_cents,tax_cents,ticket_number FROM pos_tickets WHERE restaurant_id=? AND id=?`, restaurantID, ticketID).Scan(&ticketTotal, &ticketTax, &ticketNumber); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT total_gross_cents,tax_cents,ticket_number FROM pos_tickets WHERE restaurant_id=? AND id=?`), restaurantID, ticketID).Scan(&ticketTotal, &ticketTax, &ticketNumber); err != nil {
 		return nil, err
 	}
 	var refundTax int64
@@ -853,7 +875,7 @@ func (s *Server) issueRectifyingInvoice(ctx context.Context, tx *sql.Tx, restaur
 // drifting a cent per rate.
 func posRefundVATBreakdown(ctx context.Context, tx *sql.Tx, restaurantID int, ticketID, refundTotal, refundTax int64) map[string]int64 {
 	breakdown := map[string]int64{}
-	rows, err := tx.QueryContext(ctx, `SELECT vat_rate_snapshot,COALESCE(SUM(line_total_gross_cents),0) FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' GROUP BY vat_rate_snapshot ORDER BY SUM(line_total_gross_cents) DESC`, restaurantID, ticketID)
+	rows, err := tx.QueryContext(ctx, nativeSQL(`SELECT vat_rate_snapshot,COALESCE(SUM(line_total_gross_cents),0) FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' GROUP BY vat_rate_snapshot ORDER BY SUM(line_total_gross_cents) DESC`, `SELECT CAST(vat_rate_snapshot AS text),COALESCE(SUM(line_total_gross_cents),0) FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' GROUP BY vat_rate_snapshot ORDER BY SUM(line_total_gross_cents) DESC`), restaurantID, ticketID)
 	if err != nil {
 		breakdown["0"] = refundTax
 		return breakdown
@@ -962,7 +984,7 @@ func (s *Server) handleBOPOSFiscalChainVerify(w http.ResponseWriter, r *http.Req
 func (s *Server) posCashNIFThreshold(ctx context.Context, restaurantID int) int64 {
 	const statutoryCents = 300000
 	var stored sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT cash_nif_threshold_cents FROM pos_settings WHERE restaurant_id=?`, restaurantID).Scan(&stored); err != nil || !stored.Valid || stored.Int64 <= 0 {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT cash_nif_threshold_cents FROM pos_settings WHERE restaurant_id=?`), restaurantID).Scan(&stored); err != nil || !stored.Valid || stored.Int64 <= 0 {
 		return statutoryCents
 	}
 	if stored.Int64 > statutoryCents {
@@ -992,7 +1014,7 @@ func (s *Server) posCashNIFRefusal(ctx context.Context, restaurantID int, ticket
 	// The NIF is read from the visit, the same place the receipt prints it from,
 	// so a guest whose NIF was already captured is not asked twice.
 	var taxID sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT v.customer_tax_id FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&taxID); err == nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT v.customer_tax_id FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND t.id=?`), restaurantID, ticketID).Scan(&taxID); err == nil {
 		if value, ok := normalizeSpanishCustomerTaxID(taxID.String); ok && value != "" {
 			return ""
 		}

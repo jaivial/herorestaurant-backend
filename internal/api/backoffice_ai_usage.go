@@ -164,23 +164,23 @@ func (s *Server) aiUsageReport(ctx context.Context, restaurantID int, from, to t
 	if s == nil || s.db == nil || restaurantID <= 0 {
 		return out, fmt.Errorf("restaurante activo no disponible")
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*),
             COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
             COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0),
             COALESCE(SUM(CASE WHEN priced=0 THEN 1 ELSE 0 END),0)
-        FROM ai_usage_logs WHERE restaurant_id=? AND created_at>=? AND created_at<?`,
+        FROM ai_usage_logs WHERE restaurant_id=? AND created_at>=? AND created_at<?`),
 		restaurantID, from, to).Scan(
 		&out.Summary.Calls, &out.Summary.InputTokens, &out.Summary.OutputTokens,
 		&out.Summary.CacheReadTokens, &out.Summary.CostUSD, &out.Summary.UnpricedCalls); err != nil {
 		return out, err
 	}
 
-	bucket := messagingBucketExpr(granularity)
-	rows, err := s.db.QueryContext(ctx, `SELECT `+bucket+` period,
+	bucket := sqlFragment(messagingBucketExpr(granularity), messagingBucketExprPG(granularity))
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT `+bucket+` period,
             COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
             COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0)
         FROM ai_usage_logs WHERE restaurant_id=? AND created_at>=? AND created_at<?
-        GROUP BY period ORDER BY period`, restaurantID, from, to)
+        GROUP BY period ORDER BY period`), restaurantID, from, to)
 	if err != nil {
 		return out, err
 	}
@@ -194,12 +194,12 @@ func (s *Server) aiUsageReport(ctx context.Context, restaurantID int, from, to t
 	}
 	rows.Close()
 
-	rows, err = s.db.QueryContext(ctx, `SELECT provider, model, COUNT(*),
+	rows, err = s.db.QueryContext(ctx, portableSQL(`SELECT provider, model, COUNT(*),
             COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
             COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0),
             COALESCE(SUM(CASE WHEN priced=0 THEN 0 ELSE 1 END),0)
         FROM ai_usage_logs WHERE restaurant_id=? AND created_at>=? AND created_at<?
-        GROUP BY provider, model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC`, restaurantID, from, to)
+        GROUP BY provider, model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC`), restaurantID, from, to)
 	if err != nil {
 		return out, err
 	}
@@ -215,11 +215,11 @@ func (s *Server) aiUsageReport(ctx context.Context, restaurantID int, from, to t
 	}
 	rows.Close()
 
-	rows, err = s.db.QueryContext(ctx, `SELECT feature, COUNT(*),
+	rows, err = s.db.QueryContext(ctx, portableSQL(`SELECT feature, COUNT(*),
             COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
             COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_usd),0)
         FROM ai_usage_logs WHERE restaurant_id=? AND created_at>=? AND created_at<?
-        GROUP BY feature ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC`, restaurantID, from, to)
+        GROUP BY feature ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC`), restaurantID, from, to)
 	if err != nil {
 		return out, err
 	}
@@ -246,6 +246,17 @@ func (s *Server) whatsappLogReport(ctx context.Context, restaurantID int, from, 
 	if s == nil || s.db == nil || restaurantID <= 0 {
 		return out, fmt.Errorf("restaurante activo no disponible")
 	}
+	// wa_bot_store_pg_mysql_v1: the log lives in the bot store on PG.
+	st := s.botStateDB()
+	var fromArg, toArg any = from, to
+	tsArg, like := "?", "LIKE"
+	if st.Postgres {
+		fromArg, toArg = from.UTC().Format("2006-01-02 15:04:05.000"), to.UTC().Format("2006-01-02 15:04:05.000")
+		tsArg, like = "CAST(CAST(? AS text) AS timestamp(3))", "LIKE"
+	}
+	if st.DB == nil {
+		return out, fmt.Errorf("restaurante activo no disponible")
+	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -256,32 +267,42 @@ func (s *Server) whatsappLogReport(ctx context.Context, restaurantID int, from, 
 		page = 1
 	}
 
-	where := []string{"restaurant_id=?", "created_at>=?", "created_at<?"}
-	args := []any{restaurantID, from, to}
+	where := []string{"restaurant_id=?", "created_at>=" + tsArg, "created_at<" + tsArg}
+	args := []any{restaurantID, fromArg, toArg}
 	if direction == "inbound" || direction == "outbound" {
 		where = append(where, "direction=?")
 		args = append(args, direction)
 	}
 	if term := strings.TrimSpace(search); term != "" {
-		where = append(where, "(user_phone LIKE ? OR content LIKE ?)")
+		if st.Postgres {
+			// repair-wiring2: public columns are old-nondeterministic-collation (nondeterministic): PG
+			// rejects (I)LIKE there; case-fold explicitly under "C" as the other
+			// ported searches do. Accent folding of MySQL ci LIKE stays gated.
+			where = append(where, `(LOWER(user_phone) COLLATE "C" LIKE LOWER(?) OR LOWER(content) COLLATE "C" LIKE LOWER(?))`)
+		} else {
+			where = append(where, "(user_phone "+like+" ? OR content "+like+" ?)")
+		}
 		like := "%" + term + "%"
 		args = append(args, like, like)
 	}
 	clause := strings.Join(where, " AND ")
 
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
-            COALESCE(SUM(direction='inbound'),0), COALESCE(SUM(direction='outbound'),0),
-            COALESCE(SUM(status='failed'),0)
-        FROM whatsapp_message_logs WHERE `+clause, args...).Scan(
+	if err := st.QueryRowContext(ctx, selectedSQL(`SELECT COUNT(*),
+            COALESCE(SUM(CASE WHEN direction='inbound' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN direction='outbound' THEN 1 ELSE 0 END),0),
+            COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0)
+        FROM whatsapp_message_logs WHERE `+clause), args...).Scan(
 		&out.Summary.Total, &out.Summary.Inbound, &out.Summary.Outbound, &out.Summary.Failed); err != nil {
 		return out, err
 	}
 
 	bucket := messagingBucketExpr(granularity)
+	if st.Postgres {
+		bucket = messagingBucketExprPG(granularity)
+	}
 	seriesArgs := append([]any{}, args...)
-	rows, err := s.db.QueryContext(ctx, `SELECT `+bucket+` period,
-            COALESCE(SUM(direction='inbound'),0), COALESCE(SUM(direction='outbound'),0), COUNT(*)
-        FROM whatsapp_message_logs WHERE `+clause+` GROUP BY period ORDER BY period`, seriesArgs...)
+	rows, err := st.QueryContext(ctx, selectedSQL(`SELECT `+bucket+` period,
+            COALESCE(SUM(CASE WHEN direction='inbound' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN direction='outbound' THEN 1 ELSE 0 END),0), COUNT(*)
+        FROM whatsapp_message_logs WHERE `+clause+` GROUP BY period ORDER BY period`), seriesArgs...)
 	if err != nil {
 		return out, err
 	}
@@ -296,10 +317,14 @@ func (s *Server) whatsappLogReport(ctx context.Context, restaurantID int, from, 
 	rows.Close()
 
 	listArgs := append(append([]any{}, args...), limit+1, (page-1)*limit)
-	rows, err = s.db.QueryContext(ctx, `SELECT id,direction,message_type,user_phone,content,source,status,tool_name,
-            DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ')
+	createdFmt := "DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ')"
+	if st.Postgres {
+		createdFmt = `to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	}
+	rows, err = st.QueryContext(ctx, selectedSQL(`SELECT id,direction,message_type,user_phone,content,source,status,tool_name,
+            `+createdFmt+`
         FROM whatsapp_message_logs WHERE `+clause+`
-        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, listArgs...)
+        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`), listArgs...)
 	if err != nil {
 		return out, err
 	}
@@ -318,6 +343,19 @@ func (s *Server) whatsappLogReport(ctx context.Context, restaurantID int, from, 
 		out.HasMore = true
 	}
 	return out, rows.Err()
+}
+
+// messagingBucketExprPG mirrors messagingBucketExpr on PG (ISO weeks start
+// on Monday, like MySQL WEEKDAY) (wa_bot_store_pg_mysql_v1).
+func messagingBucketExprPG(granularity string) string {
+	switch granularity {
+	case messagingGranularityWeek:
+		return "to_char(date_trunc('week', created_at), 'YYYY-MM-DD')"
+	case messagingGranularityYear:
+		return "to_char(created_at, 'YYYY-01-01')"
+	default:
+		return "to_char(created_at, 'YYYY-MM-01')"
+	}
 }
 
 // GET /api/admin/analytics/ai-usage?from=&to=&granularity=

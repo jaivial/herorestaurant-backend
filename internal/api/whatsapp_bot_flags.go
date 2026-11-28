@@ -88,7 +88,7 @@ func (s *Server) botToolFlagsPropose(ctx context.Context, rid int, msg botWebhoo
 		return botJSON(map[string]any{"error": rerr.Error()}), nil
 	}
 	var curEvent, curDocs int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(is_event,0), COALESCE(send_documents_to_client,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, in.BookingID).Scan(&curEvent, &curDocs); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(is_event,0), COALESCE(send_documents_to_client,0) FROM bookings WHERE restaurant_id = ? AND id = ?`), rid, in.BookingID).Scan(&curEvent, &curDocs); err != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
 	}
 	finalEvent := curEvent != 0
@@ -132,7 +132,7 @@ func (s *Server) botFlagsExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if json.Unmarshal([]byte(p.Args), &in) != nil {
 		return "", errors.New("propuesta ilegible")
 	}
-	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()+" FOR UPDATE"), rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
 	}
@@ -153,7 +153,7 @@ func (s *Server) botFlagsExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if err != nil {
 		return "", errors.New("error interno")
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE bookings SET `is_event` = ?, `send_documents_to_client` = ? WHERE restaurant_id = ? AND id = ?", boolToTinyint(in.IsEvent), boolToTinyint(in.SendDocs), rid, p.BookingID); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL("UPDATE bookings SET `is_event` = ?, `send_documents_to_client` = ? WHERE restaurant_id = ? AND id = ?", `UPDATE bookings SET "is_event" = ?, "send_documents_to_client" = ? WHERE restaurant_id = ? AND id = ?`), boolToTinyint(in.IsEvent), boolToTinyint(in.SendDocs), rid, p.BookingID); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
 	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botFlagsColumns...)
@@ -162,7 +162,7 @@ func (s *Server) botFlagsExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	}
 	notice := fmt.Sprintf("Reserva #%d: %s. No se ha enviado nada ni avisado al cliente.", p.BookingID, botFlagsChangeText(in.IsEvent, in.SendDocs))
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "changed_columns": botFlagsColumns, "approval_message_id": msg.MessageID})

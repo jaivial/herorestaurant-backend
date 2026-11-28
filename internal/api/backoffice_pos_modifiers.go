@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,7 +88,14 @@ func loadPOSModifierGroupsFrom(ctx context.Context, q posModifierGroupQueryer, r
 		join = `LEFT JOIN pos_product_modifier_groups pmg ON pmg.restaurant_id=g.restaurant_id AND pmg.group_id=g.id AND pmg.pos_product_id<>0`
 		order = `g.sort_order, g.name`
 	}
-	rows, err := q.QueryContext(ctx, `SELECT DISTINCT g.id,g.name,g.kind,g.min_select,g.max_select,g.sort_order,g.is_active FROM pos_modifier_groups g `+join+` WHERE `+where+` ORDER BY `+order, args...)
+	// PG rejects SELECT DISTINCT ordered by a non-selected column (pmg.sort_order).
+	// With productID>0 the pmg PK (restaurant, product, group) yields at most one
+	// row per group, so the PG twin drops DISTINCT there (same rows/order).
+	distinct := "DISTINCT "
+	if productID > 0 && sqlDialect == sqldb.Postgres {
+		distinct = ""
+	}
+	rows, err := q.QueryContext(ctx, portableSQL(`SELECT `+distinct+`g.id,g.name,`+sqlFragment("g.kind", "CAST(g.kind AS text)")+`,g.min_select,g.max_select,g.sort_order,g.is_active FROM pos_modifier_groups g `+join+` WHERE `+where+` ORDER BY `+order), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +119,7 @@ func loadPOSModifierGroupsFrom(ctx context.Context, q posModifierGroupQueryer, r
 	if len(groups) == 0 {
 		return groups, nil
 	}
-	optRows, err := q.QueryContext(ctx, `SELECT o.id,o.group_id,o.name,o.price_delta_cents,o.source_product_id,o.sort_order,o.is_active FROM pos_modifier_options o JOIN pos_modifier_groups g ON g.restaurant_id=o.restaurant_id AND g.id=o.group_id WHERE o.restaurant_id=? AND o.is_active=1 AND g.is_active=1 ORDER BY o.sort_order,o.name`, restaurantID)
+	optRows, err := q.QueryContext(ctx, portableSQL(`SELECT o.id,o.group_id,o.name,o.price_delta_cents,o.source_product_id,o.sort_order,o.is_active FROM pos_modifier_options o JOIN pos_modifier_groups g ON g.restaurant_id=o.restaurant_id AND g.id=o.group_id WHERE o.restaurant_id=? AND o.is_active=1 AND g.is_active=1 ORDER BY o.sort_order,o.name`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +156,7 @@ func loadPOSModifierGroupsFrom(ctx context.Context, q posModifierGroupQueryer, r
 // otherwise fire hundreds of round trips on every POS load.
 func (s *Server) posModifierCatalogForProducts(ctx context.Context, restaurantID int) (map[string]any, error) {
 	out := map[string]any{}
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id,g.name,g.kind,g.min_select,g.max_select,g.sort_order,g.is_active,pmg.pos_product_id FROM pos_modifier_groups g JOIN pos_product_modifier_groups pmg ON pmg.restaurant_id=g.restaurant_id AND pmg.group_id=g.id WHERE g.restaurant_id=? AND g.is_active=1 ORDER BY pmg.pos_product_id,pmg.sort_order,g.sort_order,g.name`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT g.id,g.name,g.kind,g.min_select,g.max_select,g.sort_order,g.is_active,pmg.pos_product_id FROM pos_modifier_groups g JOIN pos_product_modifier_groups pmg ON pmg.restaurant_id=g.restaurant_id AND pmg.group_id=g.id WHERE g.restaurant_id=? AND g.is_active=1 ORDER BY pmg.pos_product_id,pmg.sort_order,g.sort_order,g.name`, `SELECT g.id,g.name,CAST(g.kind AS text),g.min_select,g.max_select,g.sort_order,g.is_active,pmg.pos_product_id FROM pos_modifier_groups g JOIN pos_product_modifier_groups pmg ON pmg.restaurant_id=g.restaurant_id AND pmg.group_id=g.id WHERE g.restaurant_id=? AND g.is_active=1 ORDER BY pmg.pos_product_id,pmg.sort_order,g.sort_order,g.name COLLATE "es-x-icu"`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +194,7 @@ func (s *Server) posModifierCatalogForProducts(ctx context.Context, restaurantID
 	if len(slots) == 0 {
 		return out, nil
 	}
-	optRows, err := s.db.QueryContext(ctx, `SELECT id,group_id,name,price_delta_cents,source_product_id,sort_order,is_active FROM pos_modifier_options WHERE restaurant_id=? AND is_active=1 ORDER BY sort_order,name`, restaurantID)
+	optRows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id,group_id,name,price_delta_cents,source_product_id,sort_order,is_active FROM pos_modifier_options WHERE restaurant_id=? AND is_active=1 ORDER BY sort_order,name`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +322,7 @@ func resolvePOSModifiers(groups []posModifierGroup, selections []posModifierSele
 
 func persistPOSModifiers(ctx context.Context, tx *sql.Tx, restaurantID int, lineID int64, rows []posModifierResolved) error {
 	for _, m := range rows {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_ticket_line_modifiers (restaurant_id,ticket_line_id,modifier_option_id,name_snapshot,price_delta_cents,quantity,source_product_id) VALUES (?,?,?,?,?,?,?)`, restaurantID, lineID, m.OptionID, m.Name, m.PriceDeltaCents, m.Quantity, m.SourceProductID); err != nil {
+		if _, err := tx.ExecContext(ctx, portableSQL(`INSERT INTO pos_ticket_line_modifiers (restaurant_id,ticket_line_id,modifier_option_id,name_snapshot,price_delta_cents,quantity,source_product_id) VALUES (?,?,?,?,?,?,?)`), restaurantID, lineID, m.OptionID, m.Name, m.PriceDeltaCents, m.Quantity, m.SourceProductID); err != nil {
 			return err
 		}
 	}
@@ -325,7 +333,7 @@ func persistPOSModifiers(ctx context.Context, tx *sql.Tx, restaurantID int, line
 // line turned a ticket open into one round trip per line, which on a menu with
 // components is the difference between two queries and twenty.
 func (s *Server) loadPOSTicketLineTags(ctx context.Context, restaurantID int, ticketID int64) (map[int64][]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.ticket_line_id,t.tag_id FROM pos_ticket_line_tags t JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.id=t.ticket_line_id WHERE t.restaurant_id=? AND l.ticket_id=? ORDER BY t.ticket_line_id,t.tag_id`, restaurantID, ticketID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT t.ticket_line_id,t.tag_id FROM pos_ticket_line_tags t JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.id=t.ticket_line_id WHERE t.restaurant_id=? AND l.ticket_id=? ORDER BY t.ticket_line_id,t.tag_id`), restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +353,7 @@ func (s *Server) loadPOSTicketLineTags(ctx context.Context, restaurantID int, ti
 // Voids keep their modifiers (status lives on the line, not the modifier) so an
 // auditor can still read what was ordered before the void.
 func (s *Server) loadPOSTicketModifiers(ctx context.Context, restaurantID int, ticketID int64) (map[int64][]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.ticket_line_id,m.modifier_option_id,m.name_snapshot,m.price_delta_cents,m.quantity FROM pos_ticket_line_modifiers m JOIN pos_ticket_lines l ON l.restaurant_id=m.restaurant_id AND l.id=m.ticket_line_id WHERE m.restaurant_id=? AND l.ticket_id=? ORDER BY m.ticket_line_id,m.id`, restaurantID, ticketID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT m.ticket_line_id,m.modifier_option_id,m.name_snapshot,m.price_delta_cents,m.quantity FROM pos_ticket_line_modifiers m JOIN pos_ticket_lines l ON l.restaurant_id=m.restaurant_id AND l.id=m.ticket_line_id WHERE m.restaurant_id=? AND l.ticket_id=? ORDER BY m.ticket_line_id,m.id`), restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -418,12 +426,11 @@ func (s *Server) handleBOPOSModifierGroupCreate(w http.ResponseWriter, r *http.R
 		kind = "OPTION"
 	}
 	minSelect, maxSelect := clampPOSSelectBounds(in.MinSelect, in.MaxSelect)
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_modifier_groups (restaurant_id,name,kind,min_select,max_select,sort_order) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, name, kind, minSelect, maxSelect, in.SortOrder)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_modifier_groups (restaurant_id,name,kind,min_select,max_select,sort_order) VALUES (?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, name, kind, minSelect, maxSelect, in.SortOrder)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be created")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 }
 
@@ -472,7 +479,7 @@ func (s *Server) handleBOPOSModifierGroupPatch(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&exists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Modifier group not found")
 		return
 	}
@@ -485,7 +492,7 @@ func (s *Server) handleBOPOSModifierGroupPatch(w http.ResponseWriter, r *http.Re
 		if len(n) > 120 {
 			n = n[:120]
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_groups SET name=? WHERE restaurant_id=? AND id=?`, n, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_groups SET name=? WHERE restaurant_id=? AND id=?`), []any{n, a.ActiveRestaurantID, id}...); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be updated")
 			return
 		}
@@ -495,14 +502,14 @@ func (s *Server) handleBOPOSModifierGroupPatch(w http.ResponseWriter, r *http.Re
 		if k != "COMBO" && k != "SUPPLEMENT" && k != "OPTION" {
 			k = "OPTION"
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_groups SET kind=? WHERE restaurant_id=? AND id=?`, k, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_groups SET kind=? WHERE restaurant_id=? AND id=?`), k, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be updated")
 			return
 		}
 	}
 	if in.MinSelect != nil || in.MaxSelect != nil {
 		var minSelect, maxSelect int
-		if err := s.db.QueryRowContext(r.Context(), `SELECT min_select,max_select FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&minSelect, &maxSelect); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT min_select,max_select FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&minSelect, &maxSelect); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Modifier group not found")
 			return
 		}
@@ -513,13 +520,13 @@ func (s *Server) handleBOPOSModifierGroupPatch(w http.ResponseWriter, r *http.Re
 			maxSelect = *in.MaxSelect
 		}
 		minSelect, maxSelect = clampPOSSelectBounds(minSelect, maxSelect)
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_groups SET min_select=?,max_select=? WHERE restaurant_id=? AND id=?`, minSelect, maxSelect, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_groups SET min_select=?,max_select=? WHERE restaurant_id=? AND id=?`), minSelect, maxSelect, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be updated")
 			return
 		}
 	}
 	if in.SortOrder != nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_groups SET sort_order=? WHERE restaurant_id=? AND id=?`, *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_groups SET sort_order=? WHERE restaurant_id=? AND id=?`), *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be updated")
 			return
 		}
@@ -529,7 +536,7 @@ func (s *Server) handleBOPOSModifierGroupPatch(w http.ResponseWriter, r *http.Re
 		if *in.IsActive {
 			v = 1
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_groups SET is_active=? WHERE restaurant_id=? AND id=?`, v, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_groups SET is_active=? WHERE restaurant_id=? AND id=?`), v, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be updated")
 			return
 		}
@@ -550,15 +557,15 @@ func (s *Server) handleBOPOSModifierGroupDelete(w http.ResponseWriter, r *http.R
 	// Ordered so a failure never leaves options pointing at a missing group.
 	// pos_ticket_line_modifiers keeps name_snapshot/price_delta_cents, so
 	// already-issued tickets stay readable; only the catalog is removed.
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_product_modifier_groups WHERE restaurant_id=? AND group_id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_product_modifier_groups WHERE restaurant_id=? AND group_id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be removed")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_modifier_options WHERE restaurant_id=? AND group_id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_modifier_options WHERE restaurant_id=? AND group_id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be removed")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Modifier group could not be removed")
 		return
 	}
@@ -590,16 +597,15 @@ func (s *Server) handleBOPOSModifierOptionCreate(w http.ResponseWriter, r *http.
 		name = name[:180]
 	}
 	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, groupID).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, groupID).Scan(&exists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Modifier group not found")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_modifier_options (restaurant_id,group_id,name,price_delta_cents,source_product_id,sort_order) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, groupID, name, in.PriceDeltaCents, in.SourceProductID, in.SortOrder)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_modifier_options (restaurant_id,group_id,name,price_delta_cents,source_product_id,sort_order) VALUES (?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, groupID, name, in.PriceDeltaCents, in.SourceProductID, in.SortOrder)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Modifier option could not be created")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 }
 
@@ -624,7 +630,7 @@ func (s *Server) handleBOPOSModifierOptionPatch(w http.ResponseWriter, r *http.R
 		return
 	}
 	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_modifier_options WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_modifier_options WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&exists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Modifier option not found")
 		return
 	}
@@ -637,7 +643,7 @@ func (s *Server) handleBOPOSModifierOptionPatch(w http.ResponseWriter, r *http.R
 		if len(n) > 180 {
 			n = n[:180]
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_options SET name=? WHERE restaurant_id=? AND id=?`, n, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_options SET name=? WHERE restaurant_id=? AND id=?`), []any{n, a.ActiveRestaurantID, id}...); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier option could not be updated")
 			return
 		}
@@ -647,13 +653,13 @@ func (s *Server) handleBOPOSModifierOptionPatch(w http.ResponseWriter, r *http.R
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid modifier price")
 			return
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_options SET price_delta_cents=? WHERE restaurant_id=? AND id=?`, *in.PriceDeltaCents, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_options SET price_delta_cents=? WHERE restaurant_id=? AND id=?`), *in.PriceDeltaCents, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier option could not be updated")
 			return
 		}
 	}
 	if in.SortOrder != nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_options SET sort_order=? WHERE restaurant_id=? AND id=?`, *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_options SET sort_order=? WHERE restaurant_id=? AND id=?`), *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier option could not be updated")
 			return
 		}
@@ -663,7 +669,7 @@ func (s *Server) handleBOPOSModifierOptionPatch(w http.ResponseWriter, r *http.R
 		if *in.IsActive {
 			v = 1
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_modifier_options SET is_active=? WHERE restaurant_id=? AND id=?`, v, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_modifier_options SET is_active=? WHERE restaurant_id=? AND id=?`), v, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier option could not be updated")
 			return
 		}
@@ -681,7 +687,7 @@ func (s *Server) handleBOPOSModifierOptionDelete(w http.ResponseWriter, r *http.
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid modifier option")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_modifier_options WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_modifier_options WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Modifier option could not be removed")
 		return
 	}
@@ -712,24 +718,24 @@ func (s *Server) handleBOPOSProductModifierGroups(w http.ResponseWriter, r *http
 		}
 		for _, gid := range in.GroupIDs {
 			var exists int
-			if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, gid).Scan(&exists); err != nil {
+			if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_modifier_groups WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, gid).Scan(&exists); err != nil {
 				httpx.WriteError(w, http.StatusBadRequest, "Unknown modifier group")
 				return
 			}
 		}
 		// Only assign groups that exist and belong to this restaurant, so a
 		// crafted id cannot attach another restaurant's group.
-		if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_product_modifier_groups WHERE restaurant_id=? AND pos_product_id=?`, a.ActiveRestaurantID, productID); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_product_modifier_groups WHERE restaurant_id=? AND pos_product_id=?`), a.ActiveRestaurantID, productID); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Modifier assignment could not be saved")
 			return
 		}
 		var prodExists int
-		if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_products WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, productID).Scan(&prodExists); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_products WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, productID).Scan(&prodExists); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "POS product not found")
 			return
 		}
 		for i, gid := range in.GroupIDs {
-			if _, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_product_modifier_groups (restaurant_id,pos_product_id,group_id,is_required,sort_order) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, productID, gid, 0, i); err != nil {
+			if _, err := s.db.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_product_modifier_groups (restaurant_id,pos_product_id,group_id,is_required,sort_order) VALUES (?,?,?,?,?)`), a.ActiveRestaurantID, productID, gid, 0, i); err != nil {
 				httpx.WriteError(w, http.StatusBadRequest, "Modifier assignment could not be saved")
 				return
 			}

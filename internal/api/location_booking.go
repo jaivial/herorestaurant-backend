@@ -40,12 +40,17 @@ func (s *Server) resolveLocationBooking(ctx context.Context, restaurantID int, d
 	}
 
 	var floorRaw, salonRaw sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT allow_floor_reservation, allow_salon_reservation
 		FROM location_booking_override
 		WHERE restaurant_id = ? AND reservationDate = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(&floorRaw, &salonRaw)
+	`, `
+		SELECT allow_floor_reservation, allow_salon_reservation
+		FROM location_booking_override
+		WHERE restaurant_id = ? AND "reservationDate" = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(&floorRaw, &salonRaw)
 	if err == nil {
 		if floorRaw.Valid {
 			out.Floor.Value = floorRaw.Int64 != 0
@@ -70,12 +75,17 @@ type locationBookingOverrideRow struct {
 
 func (s *Server) loadLocationBookingOverrideRow(ctx context.Context, restaurantID int, date string) (locationBookingOverrideRow, error) {
 	var row locationBookingOverrideRow
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT allow_floor_reservation, allow_salon_reservation
 		FROM location_booking_override
 		WHERE restaurant_id = ? AND reservationDate = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(&row.Floor, &row.Salon)
+	`, `
+		SELECT allow_floor_reservation, allow_salon_reservation
+		FROM location_booking_override
+		WHERE restaurant_id = ? AND "reservationDate" = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(&row.Floor, &row.Salon)
 	if err == sql.ErrNoRows {
 		return row, nil
 	}
@@ -116,26 +126,36 @@ func (s *Server) applyLocationBookingOverride(ctx context.Context, restaurantID 
 		if !existing.Found {
 			return nil
 		}
-		_, err = s.db.ExecContext(ctx, `
+		_, err = s.db.ExecContext(ctx, nativeSQL(`
 			DELETE FROM location_booking_override
 			WHERE restaurant_id = ? AND reservationDate = ?
-		`, restaurantID, date)
+		`, `
+			DELETE FROM location_booking_override
+			WHERE restaurant_id = ? AND "reservationDate" = ?
+		`), restaurantID, date)
 		return err
 	}
 
 	if existing.Found {
-		_, err = s.db.ExecContext(ctx, `
+		_, err = s.db.ExecContext(ctx, nativeSQL(`
 			UPDATE location_booking_override
 			SET allow_floor_reservation = ?, allow_salon_reservation = ?
 			WHERE restaurant_id = ? AND reservationDate = ?
-		`, nullBoolToAny(nextFloor), nullBoolToAny(nextSalon), restaurantID, date)
+		`, `
+			UPDATE location_booking_override
+			SET allow_floor_reservation = ?, allow_salon_reservation = ?
+			WHERE restaurant_id = ? AND "reservationDate" = ?
+		`), nullBoolToAny(nextFloor), nullBoolToAny(nextSalon), restaurantID, date)
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO location_booking_override (restaurant_id, reservationDate, allow_floor_reservation, allow_salon_reservation)
 		VALUES (?, ?, ?, ?)
-	`, restaurantID, date, nullBoolToAny(nextFloor), nullBoolToAny(nextSalon))
+	`, `
+		INSERT INTO location_booking_override (restaurant_id, "reservationDate", allow_floor_reservation, allow_salon_reservation)
+		VALUES (?, ?, ?, ?)
+	`), restaurantID, date, nullBoolToAny(nextFloor), nullBoolToAny(nextSalon))
 	return err
 }
 

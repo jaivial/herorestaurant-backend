@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"preactvillacarmen/internal/sqldb"
 )
 
 // The WhatsApp outbox turns a lost message into a delayed one. Senders attempt
@@ -67,15 +70,35 @@ func (s *Server) enqueueWhatsAppDelivery(ctx context.Context, restaurantID int, 
 	if err != nil {
 		return err
 	}
+	// types_nul_json_v1: PG jsonb cannot hold U+0000 ("\u0000" -> 22P05).
+	// Refused explicitly (never stripped: the text is the customer's message);
+	// MySQL JSON keeps it. Caller logs/propagates. Forward storage proposal:
+	// docs/dbmigrate/proposed-types1.md.
+	if sqlDialect == sqldb.Postgres && jsonHasNULEscape(raw) {
+		return fmt.Errorf("whatsapp outbox: payload contains NUL, not storable in PG jsonb")
+	}
 	var causeText any
 	if cause != nil {
-		causeText = truncate(cause.Error(), 500)
+		// Byte cut kept, never mid-character: a split rune is 22021 on PG and
+		// the message would be lost instead of delayed (repair-ignore1).
+		causeText = strings.ToValidUTF8(truncate(utf8BytePrefix(cause.Error(), 500), 500), "\uFFFD")
 	}
-	_, err = s.db.ExecContext(ctx, `
+	// MySQL IGNORE cut an over-wide delivery_key (191) / recipient (255) /
+	// event (64): two keys sharing a prefix then collided and the second
+	// message was silently dropped. Refuse explicitly on both dialects.
+	if utf8.RuneCountInString(deliveryKey) > 191 || utf8.RuneCountInString(recipient) > 255 || utf8.RuneCountInString(event) > 64 {
+		return fmt.Errorf("whatsapp outbox: delivery_key/recipient/event exceeds column width")
+	}
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT IGNORE INTO message_deliveries
 			(restaurant_id, channel, event, delivery_key, recipient, payload_json, status, attempts, next_attempt_at, error)
 		VALUES (?, 'whatsapp', ?, ?, ?, ?, 'pending', 0, NOW(), ?)
-	`, restaurantID, event, nullIfEmpty(deliveryKey), recipient, string(raw), causeText)
+	`, `
+		INSERT INTO message_deliveries
+			(restaurant_id, channel, event, delivery_key, recipient, payload_json, status, attempts, next_attempt_at, error)
+		VALUES (?, 'whatsapp', ?, ?, ?, ?, 'pending', 0, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), ?)
+		ON CONFLICT (app.norm_ascii(delivery_key)) DO NOTHING
+	`), restaurantID, event, nullIfEmpty(deliveryKey), recipient, string(raw), causeText)
 	if err != nil && isSQLSchemaError(err) {
 		return nil
 	}
@@ -85,7 +108,7 @@ func (s *Server) enqueueWhatsAppDelivery(ctx context.Context, restaurantID int, 
 // claimWhatsAppDeliveries locks a batch of due rows for this process. The lock
 // token is unique per batch so a concurrent worker cannot read our rows.
 func (s *Server) claimWhatsAppDeliveries(ctx context.Context, lockToken string, limit int) ([]whatsappOutboxRow, error) {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE message_deliveries
 		SET locked_at = NOW(), locked_by = ?, attempts = attempts + 1
 		WHERE channel = 'whatsapp'
@@ -94,7 +117,16 @@ func (s *Server) claimWhatsAppDeliveries(ctx context.Context, lockToken string, 
 		  AND (locked_at IS NULL OR locked_at <= NOW() - INTERVAL ? SECOND)
 		ORDER BY id
 		LIMIT ?
-	`, lockToken, int(whatsappOutboxLockTTL.Seconds()), limit)
+	`, `
+		UPDATE message_deliveries
+		SET locked_at = date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), locked_by = ?, attempts = attempts + 1
+		WHERE id IN (SELECT id FROM message_deliveries WHERE channel = 'whatsapp'
+		  AND status = 'pending'
+		  AND (next_attempt_at IS NULL OR next_attempt_at <= date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))
+		  AND (locked_at IS NULL OR locked_at <= date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') - CAST(? AS integer) * INTERVAL '1 second')
+		ORDER BY id
+		LIMIT ? FOR UPDATE)
+	`), lockToken, int(whatsappOutboxLockTTL.Seconds()), limit)
 	if err != nil {
 		if isSQLSchemaError(err) {
 			return nil, nil
@@ -105,12 +137,12 @@ func (s *Server) claimWhatsAppDeliveries(ctx context.Context, lockToken string, 
 		return nil, nil
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, restaurant_id, recipient, event, attempts, payload_json
 		FROM message_deliveries
 		WHERE locked_by = ? AND status = 'pending'
 		ORDER BY id
-	`, lockToken)
+	`), lockToken)
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +171,15 @@ func (s *Server) claimWhatsAppDeliveries(ctx context.Context, lockToken string, 
 // attempt budget is exhausted, otherwise pending with a backoff.
 func (s *Server) finishWhatsAppDelivery(ctx context.Context, id int64, attempts int, sendErr error, giveUp bool) {
 	if sendErr == nil {
-		_, err := s.db.ExecContext(ctx, `
+		_, err := s.db.ExecContext(ctx, nativeSQL(`
 			UPDATE message_deliveries
 			SET status = 'sent', sent_at = NOW(), locked_at = NULL, locked_by = NULL, next_attempt_at = NULL, error = NULL
 			WHERE id = ?
-		`, id)
+		`, `
+			UPDATE message_deliveries
+			SET status = 'sent', sent_at = date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), locked_at = NULL, locked_by = NULL, next_attempt_at = NULL, error = NULL
+			WHERE id = ?
+		`), id)
 		if err != nil {
 			log.Printf("whatsapp outbox: marking %d as sent failed: %v", id, err)
 		}
@@ -152,20 +188,24 @@ func (s *Server) finishWhatsAppDelivery(ctx context.Context, id int64, attempts 
 
 	msg := truncate(sendErr.Error(), 500)
 	if giveUp {
-		if _, err := s.db.ExecContext(ctx, `
+		if _, err := s.db.ExecContext(ctx, portableSQL(`
 			UPDATE message_deliveries
 			SET status = 'failed', locked_at = NULL, locked_by = NULL, next_attempt_at = NULL, error = ?
 			WHERE id = ?
-		`, msg, id); err != nil {
+		`), msg, id); err != nil {
 			log.Printf("whatsapp outbox: marking %d as failed failed: %v", id, err)
 		}
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE message_deliveries
 		SET status = 'pending', locked_at = NULL, locked_by = NULL, next_attempt_at = NOW() + INTERVAL ? SECOND, error = ?
 		WHERE id = ?
-	`, int(whatsappOutboxBackoff(attempts).Seconds()), msg, id); err != nil {
+	`, `
+		UPDATE message_deliveries
+		SET status = 'pending', locked_at = NULL, locked_by = NULL, next_attempt_at = date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + CAST(? AS integer) * INTERVAL '1 second', error = ?
+		WHERE id = ?
+	`), int(whatsappOutboxBackoff(attempts).Seconds()), msg, id); err != nil {
 		log.Printf("whatsapp outbox: rescheduling %d failed: %v", id, err)
 	}
 }
@@ -195,6 +235,22 @@ func (s *Server) runWhatsAppOutboxOnce(ctx context.Context) (int, error) {
 
 	sent := 0
 	for _, row := range rows {
+		if row.Event == "campaign" {
+			// A queued campaign retry is still marketing: re-check the
+			// do-not-contact list (exact + collation) before sending. Read
+			// error: no send, reschedule; suppressed: settle as failed
+			// without sending (repair-suppression2). Transactional events
+			// (booking_confirmation...) were never suppression-gated.
+			sup, supErr := s.loadCampaignSuppressionFilterFor(ctx, row.RestaurantID, []campaignProbe{{"whatsapp", row.Recipient}})
+			if supErr != nil {
+				s.finishWhatsAppDelivery(ctx, row.ID, row.Attempts, fmt.Errorf("lista de bajas no disponible: %w", supErr), false)
+				continue
+			}
+			if sup.blocked("whatsapp", row.Recipient) {
+				s.finishWhatsAppDelivery(ctx, row.ID, row.Attempts, fmt.Errorf("baja: destinatario en la lista de no contactar"), true)
+				continue
+			}
+		}
 		sendErr := s.sendWhatsAppOutboxRow(ctx, row)
 		if sendErr == nil {
 			sent++
@@ -299,7 +355,7 @@ func (s *Server) triggerWhatsAppQueueOnReconnect(ctx context.Context, restaurant
 	// 1. failed -> pending. Reset attempts so the row gets a fresh 6-attempt
 	//    budget against the now-healthy provider; clear the locked-by token
 	//    defensively (should never be set for failed rows but cheap to set).
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE message_deliveries
 		SET status = 'pending',
 		    attempts = 0,
@@ -308,29 +364,45 @@ func (s *Server) triggerWhatsAppQueueOnReconnect(ctx context.Context, restaurant
 		    locked_by = NULL,
 		    error = NULL
 		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'failed'
-	`, restaurantID); err != nil && !isSQLSchemaError(err) {
+	`, `
+		UPDATE message_deliveries
+		SET status = 'pending',
+		    attempts = 0,
+		    next_attempt_at = date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),
+		    locked_at = NULL,
+		    locked_by = NULL,
+		    error = NULL
+		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'failed'
+	`), restaurantID); err != nil && !isSQLSchemaError(err) {
 		return rearmed, fmt.Errorf("re-arm failed rows: %w", err)
 	}
 
 	// 2. Bring pending rows whose backoff hasn't elapsed yet into the
 	//    immediate window. Capped at 1000 to keep the immediate scan
 	//    bounded even on a stale backlog.
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE message_deliveries
 		SET next_attempt_at = NOW()
 		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
 		  AND next_attempt_at IS NOT NULL AND next_attempt_at > NOW()
 		ORDER BY id
 		LIMIT 1000
-	`, restaurantID); err != nil && !isSQLSchemaError(err) {
+	`, `
+		UPDATE message_deliveries
+		SET next_attempt_at = date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')
+		WHERE id IN (SELECT id FROM message_deliveries WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
+		  AND next_attempt_at IS NOT NULL AND next_attempt_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')
+		ORDER BY id
+		LIMIT 1000)
+	`), restaurantID); err != nil && !isSQLSchemaError(err) {
 		return rearmed, fmt.Errorf("flush pending rows: %w", err)
 	}
 
 	// Count pending rows for observability.
-	if r2, err := s.db.QueryContext(ctx, `
+	if r2, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT COUNT(*) FROM message_deliveries
 		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
-	`, restaurantID); err == nil {
+	`), restaurantID); err == nil {
 		defer r2.Close()
 		if r2.Next() {
 			_ = r2.Scan(&rearmed)

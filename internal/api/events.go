@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"preactvillacarmen/internal/sqldb"
 )
 
 func eventEnabled(enabled []string, event string) bool {
@@ -48,12 +50,12 @@ func (s *Server) emitN8nWebhookAsync(restaurantID int, event string, payload any
 func (s *Server) emitN8nWebhook(ctx context.Context, restaurantID int, event string, payload any) error {
 	var webhook sql.NullString
 	var enabledRaw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT n8n_webhook_url, enabled_events_json
 		FROM restaurant_integrations
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&webhook, &enabledRaw)
+	`), restaurantID).Scan(&webhook, &enabledRaw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -85,36 +87,40 @@ func (s *Server) emitN8nWebhook(ctx context.Context, restaurantID int, event str
 	// Persist delivery attempt for observability.
 	var deliveryID int64
 	{
-		res, err := s.db.ExecContext(ctx, `
+		id, err := sqldb.InsertID(ctx, sqlDialect, s.db, nativeSQL(`
 			INSERT INTO message_deliveries (restaurant_id, channel, event, recipient, payload_json, status)
 			VALUES (?, 'webhook', ?, ?, ?, 'pending')
-		`, restaurantID, event, webhookURL, string(body))
+		`, `
+			INSERT INTO message_deliveries (restaurant_id, channel, event, recipient, payload_json, status)
+			VALUES (?, 'webhook', ?, ?, CAST(? AS jsonb), 'pending')
+		`), "id", restaurantID, event, webhookURL, string(body))
 		if err != nil {
 			return err
 		}
-		deliveryID, _ = res.LastInsertId()
+		deliveryID = id
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
-		_, _ = s.db.ExecContext(ctx, "UPDATE message_deliveries SET status = 'failed', error = ? WHERE id = ? AND restaurant_id = ?", err.Error(), deliveryID, restaurantID)
+		_, _ = s.db.ExecContext(ctx, portableSQL("UPDATE message_deliveries SET status = 'failed', error = ? WHERE id = ? AND restaurant_id = ?"), err.Error(), deliveryID, restaurantID)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
 	if err != nil {
-		_, _ = s.db.ExecContext(ctx, "UPDATE message_deliveries SET status = 'failed', error = ? WHERE id = ? AND restaurant_id = ?", err.Error(), deliveryID, restaurantID)
+		_, _ = s.db.ExecContext(ctx, portableSQL("UPDATE message_deliveries SET status = 'failed', error = ? WHERE id = ? AND restaurant_id = ?"), err.Error(), deliveryID, restaurantID)
 		return err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := "HTTP " + strconv.Itoa(resp.StatusCode) + ": " + strings.TrimSpace(string(raw))
-		_, _ = s.db.ExecContext(ctx, "UPDATE message_deliveries SET status = 'failed', error = ? WHERE id = ? AND restaurant_id = ?", msg, deliveryID, restaurantID)
+		_, _ = s.db.ExecContext(ctx, portableSQL("UPDATE message_deliveries SET status = 'failed', error = ? WHERE id = ? AND restaurant_id = ?"), msg, deliveryID, restaurantID)
 		return errors.New(msg)
 	}
 
-	_, _ = s.db.ExecContext(ctx, "UPDATE message_deliveries SET status = 'sent', sent_at = NOW() WHERE id = ? AND restaurant_id = ?", deliveryID, restaurantID)
+	_, _ = s.db.ExecContext(ctx, nativeSQL("UPDATE message_deliveries SET status = 'sent', sent_at = NOW() WHERE id = ? AND restaurant_id = ?",
+		"UPDATE message_deliveries SET status = 'sent', sent_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id = ? AND restaurant_id = ?"), deliveryID, restaurantID)
 	return nil
 }

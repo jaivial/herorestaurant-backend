@@ -1,0 +1,57 @@
+{
+  "status": "START of the precise collation/accent/PAD SPACE site ledger (cutover-blocking; nothing here is claimed equivalent)",
+  "scope": "converted (native/portable) sites only; extend per domain",
+  "sites": [
+    {
+      "file": "backoffice_auth.go",
+      "line": 545,
+      "native": "portableSQL",
+      "kind": "order_by_text"
+    },
+    {
+      "file": "backoffice_auth.go",
+      "line": 547,
+      "native": "portableSQL",
+      "kind": "order_by_text"
+    },
+    {
+      "file": "backoffice_config_ai_image.go",
+      "line": 108,
+      "native": "portableSQL",
+      "kind": "order_by_text"
+    },
+    {
+      "file": "backoffice_labour_cost.go",
+      "line": 291,
+      "native": "nativeSQL",
+      "kind": "order_by_text"
+    },
+    {
+      "file": "backoffice_labour_cost.go",
+      "line": 360,
+      "native": "nativeSQL",
+      "kind": "order_by_text"
+    },
+    {
+      "file": "backoffice_roles.go",
+      "line": 321,
+      "native": "portableSQL",
+      "kind": "order_by_text"
+    },
+    {
+      "file": "backoffice_technical_sheet_link.go (sheetListFrom) + backoffice_technical_sheets_ws.go",
+      "kind": "like_search",
+      "note": "PG: r.name COLLATE \"C\" ILIKE: case-insensitive, NOT accent-insensitive (MySQL utf8mb4_unicode_ci LIKE is both)"
+    },
+    {
+      "file": "all = / UNIQUE on _ci columns (emails, usernames, slugs, domains, role slugs, names)",
+      "kind": "equality_unique",
+      "note": "dbmigrate.ci_ai gives case+accent-insensitive = and UNIQUE; PAD SPACE (trailing spaces equal in MySQL) NOT replicated"
+    },
+    {
+      "file": "changed-row predicates (steps.go update, labour_cost update, hour_percentages update)",
+      "kind": "byte_compare",
+      "note": "COLLATE \"C\" byte comparison, deliberately (MySQL changed-row detection is byte-wise)"
+    }
+  ]
+}

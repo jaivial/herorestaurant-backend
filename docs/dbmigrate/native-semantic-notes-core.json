@@ -1,0 +1,245 @@
+{
+  "coordination_id": "sqldb_native_pg_v1",
+  "status": "compiled only; PG statements never executed; semantics unverified until manual QA",
+  "behaviour_deltas_pending": [
+    {
+      "sites": [
+        "INSERT IGNORE: backoffice_auth bootstrap admin, backoffice_platform:483, backoffice_provision owner + seeds (branding, info, bot_ai_config; reservation_defaults and page_visibility have no FK)"
+      ],
+      "mysql": "skips duplicate keys and FK failures; truncates over-length strings to the column width (characters)",
+      "pg": "ON CONFLICT DO NOTHING; EXISTS on every FK parent locked FOR KEY SHARE (InnoDB FK checks take a shared parent lock), so a concurrent parent delete cannot slip between check and insert; explicit CAST(? AS varchar(32)) for role and varchar(255) for brand_name (PG explicit varchar(n) casts truncate like IGNORE). role is never NULL at these sites (code defaults 'admin'/'owner')",
+      "status": "reasoned for reachable cases; FOR KEY SHARE inside EXISTS NOT verified on PG17 (check: docs/dbmigrate/pg17-check-queries.sql, PREPARE-only)"
+    },
+    {
+      "sites": [
+        "backoffice_platform: Stripe payments"
+      ],
+      "mysql": "JSON_UNQUOTE(JSON_EXTRACT()): missing path -> NULL; explicit JSON null -> 'null'; CAST(x AS UNSIGNED) parses the leading digits ('12abc' -> 12, non-numeric -> 0)",
+      "pg": "CASE WHEN jsonb_typeof(p #> path) = 'null' THEN 'null' ELSE p #>> path END keeps the three cases distinct; restaurant join uses substring('^\\s*([0-9]+)') with 0 fallback (more than 18 digits -> 0, cannot match an int id on either side)",
+      "status": "open: amount number-text rendering (MySQL JSON vs jsonb); CAST AS UNSIGNED replica covers leading digits after optional whitespace only - NOT shown equivalent for negatives (MySQL wraps), decimals/exponents ('1e3'), '+' sign, leading/trailing specials or >18-digit values; no source evidence of such values collected"
+    },
+    {
+      "sites": [
+        "backoffice_platform: MRR"
+      ],
+      "mysql": "decimal(10,2)/n -> DECIMAL scale 2+div_precision_increment(4)=6, rounded per row; SUM exact",
+      "pg": "ROUND(amount/n, 6) per row then exact SUM",
+      "status": "same decimal by MySQL type rules (result is scanned into float64); runtime-unverified"
+    },
+    {
+      "sites": [
+        "technical sheets list/WS search (sheetListFrom)"
+      ],
+      "mysql": "r.name LIKE (utf8mb4_unicode_ci: case- AND accent-insensitive)",
+      "pg": "r.name COLLATE \"C\" ILIKE (case-insensitive only)",
+      "status": "pending: accent-insensitive search needs unaccent or an approved normalization (like_on_nondeterministic_collation)"
+    },
+    {
+      "sites": [
+        "technical sheets ORDER BY r.name"
+      ],
+      "status": "pending: ICU ci_ai sort order vs utf8mb4_unicode_ci order may differ for accents/punctuation"
+    },
+    {
+      "sites": [
+        "all upserts/updates on tables with ON UPDATE columns"
+      ],
+      "status": "pending on_update same-value gap"
+    },
+    {
+      "sites": [
+        "all *_ci comparisons"
+      ],
+      "status": "pending collation ci_ai PAD SPACE gap"
+    },
+    {
+      "sites": [
+        "backoffice_labour_cost.go:286 labour cost"
+      ],
+      "mysql": "decimal division results rounded to scale(first operand)+div_precision_increment: minutes/60 -> 4, gross/monthly_hours -> 6, pct/100 -> 6; division by zero in SELECT -> NULL (warning)",
+      "pg": "ROUND(e.minutes_worked::numeric/60, 4) * ROUND(gross/NULLIF(monthly_hours,0), 6) * (1 + ROUND(pct/100, 6))",
+      "status": "emulated assuming div_precision_increment=4 (source value NOT in the evidence file); runtime-unverified"
+    },
+    {
+      "sites": [
+        "backoffice_labour_cost.go:139 overlap"
+      ],
+      "status": "from/to time.Time bound as CAST(? AS date): equal to MySQL only for UTC-midnight values (MySQL converts the DATETIME param in UTC); callers pass parsed dates - verify on QA"
+    },
+    {
+      "sites": [
+        "JSON_OBJECT -> jsonb_build_object (labour_cost:254, production_labour:208/239)"
+      ],
+      "status": "same JSON value stored in a JSON/jsonb column (key order normalised by both); text form may differ cosmetically"
+    },
+    {
+      "sites": [
+        "ORDER BY first/last name, sheet name"
+      ],
+      "status": "pending collation sort-order delta (collation-site-ledger.json)"
+    },
+    {
+      "sites": [
+        "checkcancel.go name LIKE"
+      ],
+      "mysql": "LOWER(TRIM(customer_name)) LIKE under utf8mb4_general_ci (case+accent insensitive)",
+      "pg": "COLLATE \"C\" LIKE after LOWER: accent-sensitive; PG17 forbids LIKE on nondeterministic ICU",
+      "status": "pending CI/accent search gap, not waived"
+    },
+    {
+      "sites": [
+        "rice_types.go FORMAT(x,0)"
+      ],
+      "mysql": "FORMAT en_US default locale, half-away rounding, comma grouping",
+      "pg": "to_char(ROUND(x,0),FM999,999,990)",
+      "status": "pending manual QA of rendered strings"
+    },
+    {
+      "sites": [
+        "modification_history.go runtime DDL"
+      ],
+      "mysql": "CREATE TABLE IF NOT EXISTS + ALTER ADD COLUMN restaurant_id + ADD INDEX + COMMENT (errors ignored)",
+      "pg": "CREATE TABLE IF NOT EXISTS mirroring plan.sql names/types/checks/FK + CREATE INDEX IF NOT EXISTS + ADD COLUMN IF NOT EXISTS + COMMENT ON TABLE",
+      "status": "exported schema lacks restaurant_id and idx_restaurant_booking although MySQL ALTER would add them: PG variant adds them at first call, same as MySQL. Unexplained source state; new-tenant/empty DB startup not runtime-verified; CI collation of varchar cols follows plan (pending). Concurrent multi-process first-call DDL race not addressed (same as MySQL)."
+    },
+    {
+      "sites": [
+        "modifications_api.go:597 created_at"
+      ],
+      "mysql": "bookings has no created_at column in exported schema: query errors",
+      "pg": "same error (undefined column)",
+      "status": "source bug preserved, not fixed/invented"
+    },
+    {
+      "sites": [
+        "modifications_api.go/events.go LastInsertId"
+      ],
+      "mysql": "LastInsertId (error ignored)",
+      "pg": "sqldb.InsertID RETURNING id; RETURNING error now surfaces as insert error",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "events.go sent_at",
+        "modification_checker.go NOW()"
+      ],
+      "mysql": "NOW() session UTC into datetime / date-vs-datetime compare",
+      "pg": "now() AT TIME ZONE UTC naive",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "salon_condesa/opening_hours/mobility_config/widget_routes upserts"
+      ],
+      "mysql": "ON DUPLICATE KEY UPDATE; updated_at ON UPDATE only on real change",
+      "pg": "ON CONFLICT real unique key DO UPDATE; ON UPDATE trigger gap (136 tables) pending",
+      "status": "pending ON UPDATE"
+    },
+    {
+      "sites": [
+        "backoffice_accounting_exports.go INSERT IGNORE accounting_exports"
+      ],
+      "mysql": "IGNORE skips uq(restaurant_id,export_type,period_from,period_to,payload_hash) duplicates and restaurants FK failure",
+      "pg": "VALUES CTE + EXISTS restaurants FOR KEY SHARE + ON CONFLICT (that key) DO NOTHING; kind whitelisted to enum labels, hash 64 hex: no truncation/enum coercion path",
+      "status": "compile only; FOR KEY SHARE race review shared"
+    },
+    {
+      "sites": [
+        "backoffice_accounting_exports.go STOCK CSV"
+      ],
+      "mysql": "COALESCE(unit_cost,0) keeps decimal(18,6) scale -> 0.000000; DECIMAL rendered from driver bytes",
+      "pg": "COALESCE(unit_cost, 0::numeric(18,6)) and numeric/enum cast to text for exact digit rendering",
+      "status": "pending manual CSV byte compare"
+    },
+    {
+      "sites": [
+        "backoffice_accounting_exports.go sales/refund ROUND(qty*cents)"
+      ],
+      "mysql": "decimal ROUND half away from zero then scanned to int64",
+      "pg": "round(numeric) half away, CAST AS bigint; service_date via to_char YYYY-MM-DD; refund LEFT JOIN ORDER BY rl.id NULLS FIRST matches MySQL NULL-first ascending",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "public_unsubscribe.go INSERT IGNORE campaign_suppressions"
+      ],
+      "mysql": "no FK; skips uq(restaurant_id,channel,target) duplicates; reason truncated to 255 chars",
+      "pg": "ON CONFLICT (restaurant_id,channel,target) DO NOTHING + CAST reason AS varchar(255); target <=190 bytes prechecked",
+      "status": "compile only; target CI uniqueness depends on ICU CI collation (pending)"
+    },
+    {
+      "sites": [
+        "public_unsubscribe.go LIKE %@%"
+      ],
+      "mysql": "CI LIKE",
+      "pg": "COLLATE C LIKE; pattern has no letters so case/accent irrelevant",
+      "status": "equivalent by pattern content, not runtime-verified"
+    },
+    {
+      "sites": [
+        "n8n_reminder.go conversation_states expires_at"
+      ],
+      "mysql": "zoneless Go-local string read as session UTC into timestamp",
+      "pg": "CAST(? AS timestamp) AT TIME ZONE UTC (same reading, independent of PG session TimeZone); updated_at now(); last_message_at ON UPDATE gap pending",
+      "status": "preserves existing (possibly local-vs-UTC) behavior, not fixed"
+    },
+    {
+      "sites": [
+        "ad_tools.go design_json"
+      ],
+      "mysql": "JSON column returns MySQL-normalised text",
+      "pg": "jsonb::text normalisation differs (key order/spacing); only null/empty compared in Go",
+      "status": "pending JSON text render class"
+    },
+    {
+      "sites": [
+        "beverage_options.go upserts"
+      ],
+      "mysql": "ON DUPLICATE KEY; menu_beverage_options sets updated_at explicitly; restaurant_beverage_options relies on ON UPDATE",
+      "pg": "ON CONFLICT (menu_id,beverage_option_id) / (restaurant_id,slug)",
+      "status": "ON UPDATE gap pending for restaurant_beverage_options"
+    },
+    {
+      "sites": [
+        "server.go wines fragments"
+      ],
+      "mysql": "CAST(COALESCE(legacy_num,v.id) AS SIGNED) wraps unsigned >2^63",
+      "pg": "CAST AS bigint errors on >2^63 (range-narrowing class); has_foto CASE 0/1; vinoV2From/WhereLegacyNumJoined reviewed portable; tipo equality CI pending",
+      "status": "compile only"
+    }
+  ],
+  "decisions": {
+    "timestamps": "NOW() on MySQL timestamp columns -> now() (PG timestamptz); on naive datetime columns -> (now() AT TIME ZONE 'UTC') (source session/global time_zone = UTC). Go time.Time args for naive datetime columns passed .UTC() (MySQL driver already stores UTC).",
+    "date_format": "DATE_FORMAT(ts,'..Z') -> to_char(ts AT TIME ZONE 'UTC', ...) for timestamp(tz) columns; to_char(dt, ...) for naive datetime (connected_at, next_run_at); dates to_char(d,'YYYY-MM-DD')",
+    "upserts": "ON DUPLICATE KEY -> ON CONFLICT (<the table's only non-PK-id unique key or PK>) DO UPDATE SET c = EXCLUDED.c; restaurant_floors uses (restaurant_id, floor_number, scope_key) (generated column, unique in PG); multi-row restaurant_days upsert relies on pre-deduplicated dates",
+    "insert_ids": "LastInsertId -> sqldb.InsertID (RETURNING id): backoffice_auth bootstrap admin, backoffice_roles member user, backoffice_platform restaurants + bo_users",
+    "rows_affected": "mcp_oauth_store (2) and chatgpt_plugin_tokens revoke: NULL -> now() updates, changed == matched on both",
+    "identifiers": "mixed-case schema identifiers quoted on PG: mesas_de_dos/mesas_de_tres/reservation_manager \"reservationDate\" \"dailyLimit\"; POSTRES \"NUM\" \"DESCRIPCION\" \"TIPO\" and dynamic dish tables quoted with their exact code-constant name",
+    "json": "explicit CAST(? AS jsonb) for restaurant_integrations (2), mandatory_menus menu_id/menu_choose_main",
+    "multi_table_delete": "DELETE s FROM bo_sessions s JOIN bo_user_restaurants -> DELETE FROM bo_sessions s USING bo_user_restaurants ur WHERE ...",
+    "dynamic": "backoffice_platform UPDATE builders (fixed lowercase SET fragments), translations IN-list: portableSQL at the call; restaurant_days multi-row, chatgpt revoke, dish tables: both dialect texts assembled and selected via nativeSQL; provision seeds: nativeSQL per seed, selectedSQL at exec",
+    "technical_sheets": {
+      "renumbering": "steps delete: MySQL UPDATE ... ORDER BY kept on MySQL (mysqlOnlySQL); PG branch parks rows above stepReorderParkOffset then brings them down (uq_stock_recipe_step_no is checked per row, CHECK step_no > 0 forbids negatives)",
+      "enums": "INSERT...SELECT CASE of text literals into stock_recipe_steps.generation_status: explicit CAST(... AS \"enum__stock_recipe_steps__generation_status\") on PG",
+      "json": "links_json, derived/manual_allergens_json bound CAST(? AS jsonb); COALESCE(json,'') reads become COALESCE(json::text,'')",
+      "time": "naive datetime columns (image job started_at/finished_at, derived_allergens_at, stock_item_prices.effective_at): (now() AT TIME ZONE 'UTC'); DATE_SUB(NOW(), INTERVAL ? MINUTE) -> (now() AT TIME ZONE 'UTC') - make_interval(mins => CAST(? AS integer))",
+      "union": "usage UNION: CONVERT(... USING utf8mb4) COLLATE utf8mb4_unicode_ci -> ::text COLLATE dbmigrate.ci_ai; vinoV2NumExprPG (CAST AS bigint); quoted \"POSTRES\"/\"NUM\"/\"DESCRIPCION\"",
+      "dynamic": "ensure/link table+condition twins quote POSTRES/NUM; SET builders portable; delete loop portableSQL + selectedSQL",
+      "insert_ids": "9 LastInsertId -> sqldb.InsertID (components, duplicate x2, ensure x2, images, steps, sheets x2)",
+      "locking": "FOR UPDATE and FOR UPDATE SKIP LOCKED are kept as-is (same semantics on PG)"
+    },
+    "rows_affected_contract": "MySQL DSN has no clientFoundRows -> RowsAffected = CHANGED rows. Where the caller uses the count (steps.go update, labour_cost update -> 404, hour_percentages update -> success only if >0), the PG branch adds a byte-wise (COLLATE \"C\") null-safe IS DISTINCT FROM predicate over the full SET tuple, values bound once via VALUES. No write -> no updated_at trigger, as in MySQL. sheets.go:268/450 already fall back to an existence check, so they answer identically on both (earlier report listed them as deltas: corrected)",
+    "group4": {
+      "division": "MySQL decimal division emulated with ROUND at MySQL result scale (see delta)",
+      "booleans": "MAX(cond) -> MAX(CASE WHEN cond THEN 1 ELSE 0 END); SELECT EXISTS -> CASE WHEN EXISTS THEN 1 ELSE 0 END (scanned into int)",
+      "concat": "CONCAT(a,' ',b) -> (a || ' ' || b) (NULL-propagating like MySQL CONCAT; names are NOT NULL anyway)",
+      "dates": "CURDATE() -> (now() AT TIME ZONE 'UTC')::date; DATE_SUB(.., INTERVAL 31 DAY) -> - 31; MONTH() -> EXTRACT(MONTH); untyped COALESCE(?, '9999-12-31') / NULLIF(?, '') typed CAST(.. AS date)",
+      "json": "JSON_OBJECT -> jsonb_build_object with typed params; snapshots bound CAST(? AS jsonb)",
+      "identifiers": "\"reservationDate\" \"dailyLimit\" \"hoursPercentages\" \"hourData\" quoted",
+      "upserts": "restaurant_salons_overrides PK, hour_split_override (restaurant_id,\"reservationDate\"), reservation_location_occupancy PK with count = table.count + EXCLUDED.count",
+      "errors": "duplicate detection by message ('Duplicate entry', 'duplicate') -> sqldb.IsUniqueViolation (MySQL 1062 / SQLSTATE 23505) at backoffice_salons (2) and backoffice_production_labour",
+      "insert_ids": "3 LastInsertId -> InsertID (production_labour, labour_cost, salons)"
+    }
+  },
+  "portable_audit": "inventory -schema: 0 portableSQL texts with MySQL-only constructs or unquoted mixed-case identifiers (11 such identifiers in schema)"
+}

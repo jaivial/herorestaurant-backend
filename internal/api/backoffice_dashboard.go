@@ -36,7 +36,7 @@ func (s *Server) handleBODashboardMetrics(w http.ResponseWriter, r *http.Request
 		totalPeople int
 	)
 	var cancelled int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END), 0) AS confirmed,
@@ -45,7 +45,7 @@ func (s *Server) handleBODashboardMetrics(w http.ResponseWriter, r *http.Request
 			(SELECT COUNT(*) FROM cancelled_bookings WHERE reservation_date = ? AND restaurant_id = ?) AS cancelled
 		FROM bookings
 		WHERE reservation_date = ? AND restaurant_id = ?
-	`, date, restaurantID, date, restaurantID).Scan(&total, &confirmed, &pending, &totalPeople, &cancelled); err != nil {
+	`), date, restaurantID, date, restaurantID).Scan(&total, &confirmed, &pending, &totalPeople, &cancelled); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando bookings")
 		return
 	}
@@ -56,7 +56,7 @@ func (s *Server) handleBODashboardMetrics(w http.ResponseWriter, r *http.Request
 		metrics := map[string]any{}
 		var pendingCount, weekSentCount int
 		var pendingAmount, monthIncome float64
-		if err := s.db.QueryRowContext(ctx, `
+		if err := s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT
 				COALESCE(SUM(CASE WHEN status = 'pendiente' THEN 1 ELSE 0 END), 0),
 				COALESCE(SUM(CASE WHEN status = 'pendiente' THEN amount ELSE 0 END), 0),
@@ -64,7 +64,7 @@ func (s *Server) handleBODashboardMetrics(w http.ResponseWriter, r *http.Request
 				COALESCE(SUM(CASE WHEN status = 'enviada' AND invoice_date BETWEEN ? AND ? THEN 1 ELSE 0 END), 0)
 			FROM invoices
 			WHERE restaurant_id = ?
-		`, fromMonth, through, fromWeek, through, restaurantID).Scan(&pendingCount, &pendingAmount, &monthIncome, &weekSentCount); err != nil {
+		`), fromMonth, through, fromWeek, through, restaurantID).Scan(&pendingCount, &pendingAmount, &monthIncome, &weekSentCount); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error consultando facturas")
 			return
 		}

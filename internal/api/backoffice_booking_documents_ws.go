@@ -306,7 +306,7 @@ func (s *Server) bookingDocumentWSFail(c *bookingDocumentWSClient, msg bookingDo
 func (s *Server) bookingBelongsToRestaurant(ctx context.Context, restaurantID int, bookingID int64) bool {
 	var found int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT 1 FROM bookings WHERE restaurant_id = ? AND id = ? LIMIT 1`, restaurantID, bookingID).Scan(&found); err != nil {
+		portableSQL(`SELECT 1 FROM bookings WHERE restaurant_id = ? AND id = ? LIMIT 1`), restaurantID, bookingID).Scan(&found); err != nil {
 		return false
 	}
 	return found == 1

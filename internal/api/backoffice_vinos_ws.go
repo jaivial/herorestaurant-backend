@@ -266,12 +266,12 @@ type boVinoAIImagesItem struct {
 func (s *Server) loadBOVinoAIImageTracker(ctx context.Context, restaurantID int) (boVinoAIImagesTracker, error) {
 	// wine_num on the wire is the legacy num, so the join with the map stays in
 	// the statement: the WebSocket clients key their rows by it.
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+vinoV2NumExpr+` AS num, COALESCE(v.ai_requested_img, 0), COALESCE(v.ai_generating_img, 0), v.ai_generated_img
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
+		SELECT `+sqlFragment(vinoV2NumExpr, vinoV2NumExprPG)+` AS num, COALESCE(v.ai_requested_img, 0), COALESCE(v.ai_generating_img, 0), v.ai_generated_img
 		`+vinoV2From+`
 		WHERE v.restaurant_id = ? AND (v.ai_requested_img = 1 OR v.ai_generating_img = 1 OR v.ai_generated_img IS NOT NULL)
 		ORDER BY num ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return boVinoAIImagesTracker{}, err
 	}
@@ -376,11 +376,13 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	// affected==0 means "Wine not found"; MySQL counts CHANGED rows (already
+	// 1/1 -> 0), so the PG branch adds the same changed-row predicate.
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE group_menu_wines_v2
 		SET ai_requested_img = 1,
 		    ai_generating_img = 1
-		WHERE `+vinoV2WhereLegacyNum,
+		WHERE `+vinoV2WhereLegacyNum+sqlFragment("", " AND ROW(ai_requested_img, ai_generating_img) IS DISTINCT FROM ROW(1, 1)")),
 		vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating wine AI state")
@@ -461,13 +463,13 @@ func (s *Server) runBOVinoAIImageJob(job boVinoAIImageJob) {
 	}
 
 	fullURL := s.bunnyPullURL(ctx, job.RestaurantID, objectPath)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE group_menu_wines_v2
 		SET ai_requested_img = 1,
 		    ai_generating_img = 0,
 		    ai_generated_img = ?,
 		    foto_path = ?
-		WHERE `+vinoV2WhereLegacyNum,
+		WHERE `+vinoV2WhereLegacyNum),
 		append([]any{fullURL, objectPath}, vinoV2LegacyNumArgs(job.RestaurantID, job.WineNum)...)...)
 	if err != nil {
 		s.logBOVinoAITrace("job db save error restaurant=%d wine=%d err=%v", job.RestaurantID, job.WineNum, err)
@@ -490,10 +492,10 @@ func (s *Server) failBOVinoAIImageJob(job boVinoAIImageJob, message string) {
 	defer cancel()
 	s.logBOVinoAITrace("job failed restaurant=%d wine=%d message=%q", job.RestaurantID, job.WineNum, message)
 
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE group_menu_wines_v2
 		SET ai_generating_img = 0
-		WHERE `+vinoV2WhereLegacyNum,
+		WHERE `+vinoV2WhereLegacyNum),
 		vinoV2LegacyNumArgs(job.RestaurantID, job.WineNum)...)
 
 	s.broadcastBOVinoAIEvent(job.RestaurantID, "wine_ai_failed", map[string]any{

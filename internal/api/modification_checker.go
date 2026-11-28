@@ -39,7 +39,7 @@ func (s *Server) handleModificationChecker(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			id,
 			customer_name,
@@ -53,7 +53,21 @@ func (s *Server) handleModificationChecker(w http.ResponseWriter, r *http.Reques
 		  AND CONCAT(COALESCE(contact_phone_country_code, '34'), COALESCE(contact_phone, '')) = ?
 		  AND reservation_date >= NOW()
 		ORDER BY reservation_date ASC
-	`, restaurantID, senderNumber)
+	`, `
+		SELECT
+			id,
+			customer_name,
+			reservation_date,
+			"babyStrollers",
+			"highChairs",
+			arroz_type,
+			arroz_servings
+		FROM bookings
+		WHERE restaurant_id = ?
+		  AND (COALESCE(contact_phone_country_code, '34') || COALESCE(contact_phone, '')) = ?
+		  AND CAST(reservation_date AS timestamp) >= (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		ORDER BY reservation_date ASC
+	`), restaurantID, senderNumber)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,

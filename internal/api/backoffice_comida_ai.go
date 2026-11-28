@@ -321,7 +321,7 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 	// Verify item exists and belongs to restaurant
 	var exists int
 	err = s.db.QueryRowContext(r.Context(),
-		"SELECT 1 FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		portableSQL("SELECT 1 FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?"),
 		itemNum, a.ActiveRestaurantID, string(ct),
 	).Scan(&exists)
 	if err != nil {
@@ -330,7 +330,7 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.db.ExecContext(r.Context(),
-		"UPDATE comida_items SET ai_generating = 1 WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		portableSQL("UPDATE comida_items SET ai_generating = 1 WHERE id = ? AND restaurant_id = ? AND source_type = ?"),
 		itemNum, a.ActiveRestaurantID, string(ct))
 
 	s.broadcastBOComidaAIEvent(a.ActiveRestaurantID, "comida_ai_started", map[string]any{
@@ -585,14 +585,14 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 	// Store in foto_url (the column the list/detail endpoints read first) and clear
 	// foto_path/foto so the freshly generated image is what reloads show — mirrors
 	// the manual-upload path and keeps a single source of truth for the image.
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE comida_items
 		SET foto_url = ?,
 		    foto_path = NULL,
 		    foto = NULL,
 		    ai_generating = 0
 		WHERE id = ? AND restaurant_id = ? AND source_type = ?
-	`, fullURL, job.ItemNum, job.RestaurantID, job.Tipo)
+	`), fullURL, job.ItemNum, job.RestaurantID, job.Tipo)
 	if err != nil {
 		s.logBOComidaAITrace("job db save error restaurant=%d tipo=%s item=%d err=%v", job.RestaurantID, job.Tipo, job.ItemNum, err)
 		s.failBOComidaAIImageJob(job, "Failed saving generated image")
@@ -610,7 +610,7 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 func (s *Server) failBOComidaAIImageJob(job boComidaAIImageJob, message string) {
 	s.logBOComidaAITrace("job failed restaurant=%d tipo=%s item=%d message=%s", job.RestaurantID, job.Tipo, job.ItemNum, message)
 	s.db.ExecContext(context.Background(),
-		"UPDATE comida_items SET ai_generating = 0 WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		portableSQL("UPDATE comida_items SET ai_generating = 0 WHERE id = ? AND restaurant_id = ? AND source_type = ?"),
 		job.ItemNum, job.RestaurantID, job.Tipo)
 	s.broadcastBOComidaAIEvent(job.RestaurantID, "comida_ai_failed", map[string]any{
 		"tipo":    job.Tipo,

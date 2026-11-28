@@ -23,14 +23,14 @@ func (s *Server) handleBOPOSTicketsList(w http.ResponseWriter, r *http.Request) 
 	where := "t.restaurant_id=?"
 	args := []any{a.ActiveRestaurantID}
 	if status != "" {
-		where += " AND t.status=?"
+		where += sqlFragment(" AND t.status=?", " AND CAST(t.status AS text)=?") // enum: unknown status -> no match, not a cast error
 		args = append(args, status)
 	}
 	if date != "" {
 		where += " AND v.service_date=?"
 		args = append(args, date)
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT t.id,t.ticket_number,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status,t.paid_at,v.id,v.table_id,COALESCE(rt.name,''),v.covers,v.service_date,v.service_type FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `+where+` ORDER BY COALESCE(t.paid_at,t.opened_at) DESC LIMIT 500`, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment(`SELECT t.id,t.ticket_number,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status,t.paid_at,v.id,v.table_id,COALESCE(rt.name,''),v.covers,v.service_date,v.service_type FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `, `SELECT t.id,t.ticket_number,CAST(t.status AS text),t.total_gross_cents,t.refunded_cents,CAST(t.stock_status AS text),t.paid_at,v.id,v.table_id,COALESCE(rt.name,''),v.covers,v.service_date,CAST(v.service_type AS text) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `)+where+` ORDER BY COALESCE(t.paid_at,t.opened_at) DESC LIMIT 500`), args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading tickets")
 		return
@@ -78,7 +78,7 @@ func (s *Server) handleBOPOSTicketGet(w http.ResponseWriter, r *http.Request) {
 // already exist. Only captured money is returned: a voided or refunded row is
 // not money that came in.
 func (s *Server) posTicketPayments(r *http.Request, restaurantID int, ticketID int64) []map[string]any {
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,method,amount_cents,tip_cents,tendered_cents,COALESCE(provider,''),COALESCE(card_last4,'') FROM pos_payments WHERE restaurant_id=? AND ticket_id=? AND status='CAPTURED' ORDER BY id`, restaurantID, ticketID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,method,amount_cents,tip_cents,tendered_cents,COALESCE(provider,''),COALESCE(card_last4,'') FROM pos_payments WHERE restaurant_id=? AND ticket_id=? AND status='CAPTURED' ORDER BY id`, `SELECT id,CAST(method AS text),amount_cents,tip_cents,tendered_cents,COALESCE(provider,''),COALESCE(CAST(card_last4 AS text),'') FROM pos_payments WHERE restaurant_id=? AND ticket_id=? AND status='CAPTURED' ORDER BY id`), restaurantID, ticketID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -109,7 +109,7 @@ func (s *Server) handleBOPOSProductGet(w http.ResponseWriter, r *http.Request) {
 	var categoryID, vatID, sourceID sql.NullInt64
 	var price int64
 	var active, version int
-	err := s.db.QueryRowContext(r.Context(), `SELECT name,COALESCE(sku,''),COALESCE(description,''),source_type,source_id,category_id,price_gross_cents,vat_rate_id,is_active,version FROM pos_products WHERE restaurant_id=? AND id=? AND deleted_at IS NULL`, a.ActiveRestaurantID, id).Scan(&name, &sku, &description, &sourceType, &sourceID, &categoryID, &price, &vatID, &active, &version)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT name,COALESCE(sku,''),COALESCE(description,''),source_type,source_id,category_id,price_gross_cents,vat_rate_id,is_active,version FROM pos_products WHERE restaurant_id=? AND id=? AND deleted_at IS NULL`, `SELECT name,COALESCE(sku,''),COALESCE(description,''),CAST(source_type AS text),source_id,category_id,price_gross_cents,vat_rate_id,is_active,version FROM pos_products WHERE restaurant_id=? AND id=? AND deleted_at IS NULL`), a.ActiveRestaurantID, id).Scan(&name, &sku, &description, &sourceType, &sourceID, &categoryID, &price, &vatID, &active, &version)
 	if err == sql.ErrNoRows {
 		httpx.WriteError(w, 404, "POS product not found")
 		return
@@ -128,7 +128,7 @@ func (s *Server) handleBOPOSExportSales(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT t.ticket_number,v.service_date,v.service_type,v.channel,COALESCE(rt.name,''),v.covers,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY v.service_date,t.id`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT t.ticket_number,v.service_date,v.service_type,v.channel,COALESCE(rt.name,''),v.covers,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY v.service_date,t.id`, `SELECT t.ticket_number,v.service_date,CAST(v.service_type AS text),CAST(v.channel AS text),COALESCE(rt.name,''),v.covers,CAST(t.status AS text),t.total_gross_cents,t.refunded_cents,CAST(t.stock_status AS text) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY v.service_date,t.id`), a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error exporting sales")
 		return
@@ -153,11 +153,11 @@ func csvCell(value string) string { return `"` + strings.ReplaceAll(value, `"`, 
 func (s *Server) handleBOPOSHealth(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	var openVisits, oldVisits, exceptions, partialTickets, negativeStockAnomalies, oldShifts int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*),SUM(opened_at<DATE_SUB(NOW(),INTERVAL 12 HOUR)) FROM pos_visits WHERE restaurant_id=? AND status='OPEN'`, a.ActiveRestaurantID).Scan(&openVisits, &oldVisits)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`, a.ActiveRestaurantID).Scan(&exceptions)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND stock_status='PARTIAL'`, a.ActiveRestaurantID).Scan(&partialTickets)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_stock_anomalies WHERE restaurant_id=? AND status='OPEN'`, a.ActiveRestaurantID).Scan(&negativeStockAnomalies)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' AND opened_at<DATE_SUB(NOW(),INTERVAL 24 HOUR)`, a.ActiveRestaurantID).Scan(&oldShifts)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COUNT(*),SUM(opened_at<DATE_SUB(NOW(),INTERVAL 12 HOUR)) FROM pos_visits WHERE restaurant_id=? AND status='OPEN'`, `SELECT COUNT(*),SUM(CASE WHEN opened_at<date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')-INTERVAL '12 hours' THEN 1 ELSE 0 END) FROM pos_visits WHERE restaurant_id=? AND status='OPEN'`), a.ActiveRestaurantID).Scan(&openVisits, &oldVisits)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`), a.ActiveRestaurantID).Scan(&exceptions)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND stock_status='PARTIAL'`), a.ActiveRestaurantID).Scan(&partialTickets)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_stock_anomalies WHERE restaurant_id=? AND status='OPEN'`), a.ActiveRestaurantID).Scan(&negativeStockAnomalies)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COUNT(*) FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' AND opened_at<DATE_SUB(NOW(),INTERVAL 24 HOUR)`, `SELECT COUNT(*) FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' AND opened_at<date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')-INTERVAL '24 hours'`), a.ActiveRestaurantID).Scan(&oldShifts)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "openVisits": openVisits, "oldOpenVisits": oldVisits, "openStockExceptions": exceptions, "partialStockTickets": partialTickets, "negativeStockAnomalies": negativeStockAnomalies, "oldOpenShifts": oldShifts, "checkedAt": time.Now().UTC()})
 }
 
@@ -170,7 +170,7 @@ func (s *Server) handleBOPOSRolePermissionsGet(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, 400, "Invalid role")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT permission_key,is_allowed FROM pos_role_permissions WHERE restaurant_id=? AND role_slug=?`, a.ActiveRestaurantID, role)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT permission_key,is_allowed FROM pos_role_permissions WHERE restaurant_id=? AND role_slug=?`, `SELECT permission_key,is_allowed FROM pos_role_permissions WHERE restaurant_id=? AND app.norm_ascii(role_slug) = app.norm_ascii(?)`), a.ActiveRestaurantID, role)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading POS permissions")
 		return
@@ -217,7 +217,7 @@ func (s *Server) handleBOPOSRolePermissionsPut(w http.ResponseWriter, r *http.Re
 	}
 	defer tx.Rollback()
 	for _, key := range posPermissionKeys {
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_role_permissions (restaurant_id,role_slug,permission_key,is_allowed) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE is_allowed=VALUES(is_allowed)`, a.ActiveRestaurantID, role, key, stockBoolInt(selected[key])); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_role_permissions (restaurant_id,role_slug,permission_key,is_allowed) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE is_allowed=VALUES(is_allowed)`, `INSERT INTO pos_role_permissions (restaurant_id,role_slug,permission_key,is_allowed) VALUES (?,?,?,?) ON CONFLICT (restaurant_id, role_slug, permission_key) DO UPDATE SET is_allowed=EXCLUDED.is_allowed`), a.ActiveRestaurantID, role, key, stockBoolInt(selected[key])); err != nil {
 			httpx.WriteError(w, 500, "Error saving POS permissions")
 			return
 		}
@@ -231,7 +231,7 @@ func (s *Server) handleBOPOSRolePermissionsPut(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleBOPOSStockAnomaliesList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	query := `SELECT a.id, a.ticket_id, t.ticket_number, a.stock_item_id, COALESCE(si.name,''), a.warehouse_id, COALESCE(wh.name,''), a.quantity_after_base, a.status, a.created_at
+	query := sqlFragment(`SELECT a.id, a.ticket_id, t.ticket_number, a.stock_item_id, COALESCE(si.name,''), a.warehouse_id, COALESCE(wh.name,''), a.quantity_after_base, a.status, a.created_at`, `SELECT a.id, a.ticket_id, t.ticket_number, a.stock_item_id, COALESCE(si.name,''), a.warehouse_id, COALESCE(wh.name,''), a.quantity_after_base, CAST(a.status AS text), a.created_at`) + `
 		FROM pos_stock_anomalies a
 		JOIN pos_tickets t ON t.restaurant_id=a.restaurant_id AND t.id=a.ticket_id
 		LEFT JOIN stock_items si ON si.restaurant_id=a.restaurant_id AND si.id=a.stock_item_id
@@ -247,7 +247,7 @@ func (s *Server) handleBOPOSStockAnomaliesList(w http.ResponseWriter, r *http.Re
 	}
 	query += ` ORDER BY a.created_at DESC LIMIT ?`
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(query), args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error listing stock anomalies")
 		return
@@ -275,7 +275,7 @@ func (s *Server) handleBOPOSStockAnomaliesList(w http.ResponseWriter, r *http.Re
 func (s *Server) handleBOPOSStockAnomalyResolve(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_stock_anomalies SET status='RESOLVED',resolved_by=?,resolved_at=NOW() WHERE restaurant_id=? AND id=? AND status='OPEN'`, a.User.ID, a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`UPDATE pos_stock_anomalies SET status='RESOLVED',resolved_by=?,resolved_at=NOW() WHERE restaurant_id=? AND id=? AND status='OPEN'`, `UPDATE pos_stock_anomalies SET status='RESOLVED',resolved_by=?,resolved_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND id=? AND status='OPEN'`), a.User.ID, a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error resolving stock anomaly")
 		return

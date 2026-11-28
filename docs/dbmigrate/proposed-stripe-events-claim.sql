@@ -1,0 +1,18 @@
+-- PROPOSAL ONLY (repair-stripe-audit1). NOT applied; not in internal/db/migrations,
+-- not in immutable PG plan r4 or the r5 proof. Never executed.
+-- v2 needs NO schema change: exclusivity is a pinned per-event advisory lock,
+-- created_at is untouched. Optional forward columns for observability of the
+-- durable "review" state (processed_at NULL + 200 to Stripe):
+-- MySQL:
+--   ALTER TABLE stripe_events
+--     ADD COLUMN outcome VARCHAR(16) NULL,      -- done | review | retry
+--     ADD COLUMN attempts INT UNSIGNED NOT NULL DEFAULT 0,
+--     ADD COLUMN last_error VARCHAR(500) NULL;
+-- PostgreSQL (separate forward migration after import):
+--   ALTER TABLE stripe_events
+--     ADD COLUMN outcome varchar(16),
+--     ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+--     ADD COLUMN last_error varchar(500);
+-- Server-side price authority (CRITICAL gate, business price source needed):
+--   no table proposed until the price source is decided.
+

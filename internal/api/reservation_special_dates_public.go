@@ -83,14 +83,21 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, title,
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
+		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, whatsapp_only, title,
 		       max_per_table_enabled, max_per_table,
 		       ask_adults, ask_high_chairs, ask_baby_strollers
 		FROM special_dates
 		WHERE restaurant_id = ? AND is_active = 1 AND date BETWEEN ? AND ?
 		ORDER BY date ASC
-	`, restaurantID, from, to)
+	`, `
+		SELECT to_char(date, 'YYYY-MM-DD'), is_active, prereserva_enabled, whatsapp_only, title,
+		       max_per_table_enabled, max_per_table,
+		       ask_adults, ask_high_chairs, ask_baby_strollers
+		FROM special_dates
+		WHERE restaurant_id = ? AND is_active = 1 AND date BETWEEN ? AND ?
+		ORDER BY date ASC
+	`), restaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando special_dates")
 		return
@@ -100,13 +107,13 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 	out := make([]map[string]any, 0, 8)
 	for rows.Next() {
 		var date string
-		var isActive, prereserva int
+		var isActive, prereserva, whatsAppOnly int
 		var title string
 		var maxPerTableEnabled int
 		var maxPerTable sql.NullInt64
 		// Coordination id: guest_count_flags_v1
 		var askAdults, askHighChairs, askBabyStrollers int
-		if err := rows.Scan(&date, &isActive, &prereserva, &title, &maxPerTableEnabled, &maxPerTable, &askAdults, &askHighChairs, &askBabyStrollers); err != nil {
+		if err := rows.Scan(&date, &isActive, &prereserva, &whatsAppOnly, &title, &maxPerTableEnabled, &maxPerTable, &askAdults, &askHighChairs, &askBabyStrollers); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, "Error leyendo special_dates")
 			return
 		}
@@ -117,9 +124,11 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 			return
 		}
 		row := map[string]any{
-			"date":                  date,
-			"is_active":             isActive != 0,
-			"prereserva_enabled":    prereserva != 0,
+			"date":               date,
+			"is_active":          isActive != 0,
+			"prereserva_enabled": prereserva != 0,
+			// Coordination id: special_date_whatsapp_only_v1
+			"whatsapp_only":         whatsAppOnly != 0,
 			"title":                 title,
 			"max_per_table_enabled": maxPerTableEnabled != 0,
 			// Coordination id: mobility_issues_v1
@@ -139,12 +148,20 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"success":       true,
 		"from":          from,
 		"to":            to,
 		"special_dates": out,
-	})
+	}
+	// Coordination id: special_date_whatsapp_only_v1 - the number the notice links to.
+	for _, row := range out {
+		if row["whatsapp_only"] == true {
+			resp["whatsapp_phone"] = s.restaurantWhatsAppPhone(r.Context(), restaurantID)
+			break
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +184,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	}
 
 	var id int64
-	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
+	var isActive, prereservaEnabled, whatsAppOnly, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
 	// Coordination id: guest_count_flags_v1
 	var askAdults, askHighChairs, askBabyStrollers int
 	var title string
@@ -176,16 +193,24 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	var adelantoMethodsRaw sql.NullString
 	var adelantoUnifiedAmount sql.NullFloat64
 
-	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, is_active, title, description, custom_notice, prereserva_enabled,
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
+		SELECT id, is_active, title, description, custom_notice, prereserva_enabled, whatsapp_only,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       ask_adults, ask_high_chairs, ask_baby_strollers,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(
-		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled,
+	`, `
+		SELECT id, is_active, title, description, custom_notice, prereserva_enabled, whatsapp_only,
+		       max_per_table_enabled, max_per_table, requires_adelanto,
+		       ask_adults, ask_high_chairs, ask_baby_strollers,
+		       CAST(adelanto_payment_methods AS text), adelanto_unified, adelanto_unified_amount
+		FROM special_dates
+		WHERE restaurant_id = ? AND date = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(
+		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled, &whatsAppOnly,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&askAdults, &askHighChairs, &askBabyStrollers,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
@@ -248,6 +273,11 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	if maxPerTable.Valid {
 		resp["max_per_table"] = maxPerTable.Int64
 	}
+	// Coordination id: special_date_whatsapp_only_v1
+	if whatsAppOnly != 0 {
+		resp["whatsapp_only"] = true
+		resp["whatsapp_phone"] = s.restaurantWhatsAppPhone(r.Context(), restaurantID)
+	}
 	if adelantoUnifiedAmount.Valid {
 		resp["adelanto_unified_amount"] = adelantoUnifiedAmount.Float64
 	}
@@ -258,7 +288,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 // loadPublicSpecialDateMenus reads the child rows for one special date and
 // enriches each one with the menu's title/price when it references a real menu.
 func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount, sdm.price,
 		       COALESCE(m.menu_title, '') AS menu_title,
 		       COALESCE(m.price, 0) AS menu_price
@@ -268,7 +298,7 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 		  AND m.active = 1 AND m.is_draft = 0
 		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?
 		ORDER BY sdm.position ASC, sdm.id ASC
-	`, restaurantID, specialDateID)
+	`), restaurantID, specialDateID)
 	if err != nil {
 		return nil, err
 	}

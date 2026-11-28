@@ -37,7 +37,7 @@ func (s *Server) handleGetHourPercentages(w http.ResponseWriter, r *http.Request
 	var activeHours []string
 	{
 		var hoursRaw sql.NullString
-		err := s.db.QueryRowContext(r.Context(), "SELECT hoursarray FROM openinghours WHERE restaurant_id = ? AND dateselected = ? LIMIT 1", restaurantID, date).Scan(&hoursRaw)
+		err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT hoursarray FROM openinghours WHERE restaurant_id = ? AND dateselected = ? LIMIT 1"), restaurantID, date).Scan(&hoursRaw)
 		if err != nil && err != sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -61,7 +61,7 @@ func (s *Server) handleGetHourPercentages(w http.ResponseWriter, r *http.Request
 	hourPercentages := map[string]float64{}
 	{
 		var percRaw sql.NullString
-		err := s.db.QueryRowContext(r.Context(), "SELECT hoursPercentages FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&percRaw)
+		err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT hoursPercentages FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "hoursPercentages" FROM hours_percentage WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, date).Scan(&percRaw)
 		if err != nil && err != sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -89,12 +89,12 @@ func (s *Server) handleGetHourPercentages(w http.ResponseWriter, r *http.Request
 		bookingsByHour[h] = 0
 	}
 
-	bookingRows, err := s.db.QueryContext(r.Context(), `
+	bookingRows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT reservation_time, COALESCE(SUM(party_size), 0) AS total_people
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		GROUP BY reservation_time
-	`, restaurantID, date)
+	`), restaurantID, date)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -124,13 +124,13 @@ func (s *Server) handleGetHourPercentages(w http.ResponseWriter, r *http.Request
 
 	// Step 4: total daily bookings and capacity (dailyLimit).
 	dailyLimit := 45
-	_ = s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&dailyLimit)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, date).Scan(&dailyLimit)
 	if dailyLimit <= 0 {
 		dailyLimit = 45
 	}
 
 	totalPeople := 0
-	_ = s.db.QueryRowContext(r.Context(), "SELECT COALESCE(SUM(party_size), 0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?", restaurantID, date).Scan(&totalPeople)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(SUM(party_size), 0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?"), restaurantID, date).Scan(&totalPeople)
 
 	// Step 5: completion percentages + per-hour capacity.
 	hourlyCapacities := map[string]int{}
@@ -220,7 +220,7 @@ func (s *Server) handleUpdateHourPercentages(w http.ResponseWriter, r *http.Requ
 	percentagesJSON, _ := json.Marshal(input.Percentages)
 
 	var exists int
-	err := s.db.QueryRowContext(r.Context(), "SELECT 1 FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&exists)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT 1 FROM hours_percentage WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT 1 FROM hours_percentage WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, date).Scan(&exists)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -234,9 +234,10 @@ func (s *Server) handleUpdateHourPercentages(w http.ResponseWriter, r *http.Requ
 	var res sql.Result
 	if err == nil {
 		action = "updated"
-		res, err = s.db.ExecContext(r.Context(), "UPDATE hours_percentage SET hoursPercentages = ? WHERE restaurant_id = ? AND reservationDate = ?", string(percentagesJSON), restaurantID, date)
+		res, err = s.db.ExecContext(r.Context(), nativeSQL("UPDATE hours_percentage SET hoursPercentages = ? WHERE restaurant_id = ? AND reservationDate = ?", `UPDATE hours_percentage t SET "hoursPercentages" = v.hp FROM (VALUES (CAST(? AS text))) AS v(hp)
+		WHERE t.restaurant_id = ? AND t."reservationDate" = ? AND t."hoursPercentages" COLLATE "C" IS DISTINCT FROM v.hp COLLATE "C"`), string(percentagesJSON), restaurantID, date)
 	} else {
-		res, err = s.db.ExecContext(r.Context(), "INSERT INTO hours_percentage (restaurant_id, reservationDate, hoursPercentages) VALUES (?, ?, ?)", restaurantID, date, string(percentagesJSON))
+		res, err = s.db.ExecContext(r.Context(), nativeSQL("INSERT INTO hours_percentage (restaurant_id, reservationDate, hoursPercentages) VALUES (?, ?, ?)", `INSERT INTO hours_percentage (restaurant_id, "reservationDate", "hoursPercentages") VALUES (?, ?, ?)`), restaurantID, date, string(percentagesJSON))
 	}
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{

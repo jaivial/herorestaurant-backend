@@ -91,11 +91,11 @@ func (s *Server) handleBOTechnicalSheetStepImageUpload(w http.ResponseWriter, r 
 
 	// A manual upload supersedes any queued generation: leaving the step
 	// PENDING would show a spinner over an image that is already there.
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE stock_recipe_steps
 		   SET image_url=?, image_object_path=?, generation_status='NONE',
 		       generation_mode=NULL, generation_error=NULL
-		 WHERE restaurant_id=? AND id=? AND recipe_id=?`,
+		 WHERE restaurant_id=? AND id=? AND recipe_id=?`),
 		imageURL, objectPath, a.ActiveRestaurantID, stepID, sheetID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando la imagen")
 		return

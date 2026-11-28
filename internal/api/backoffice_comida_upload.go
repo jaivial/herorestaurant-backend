@@ -46,7 +46,7 @@ func (s *Server) handleBOComidaImageUpload(w http.ResponseWriter, r *http.Reques
 	// Verify item exists and belongs to restaurant
 	var exists int
 	err = s.db.QueryRowContext(r.Context(),
-		"SELECT 1 FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		portableSQL("SELECT 1 FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?"),
 		id, a.ActiveRestaurantID, string(ct),
 	).Scan(&exists)
 	if err != nil {
@@ -132,11 +132,11 @@ func (s *Server) handleBOComidaImageUpload(w http.ResponseWriter, r *http.Reques
 	fullURL := s.bunnyPullURL(ctx, a.ActiveRestaurantID, objectPath)
 
 	// Save foto_url (not foto_path — keeps AI workflow separate)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE comida_items
 		SET foto_url = ?, foto_path = NULL, foto = NULL, ai_generating = 0
 		WHERE id = ? AND restaurant_id = ? AND source_type = ?
-	`, fullURL, id, a.ActiveRestaurantID, string(ct))
+	`), fullURL, id, a.ActiveRestaurantID, string(ct))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,

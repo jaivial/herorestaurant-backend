@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
@@ -72,9 +73,9 @@ func (s *Server) loadConnectAccount(ctx context.Context, restaurantID int) (*con
 		charges, payouts, dsub int
 		demo                   int
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT account_encrypted, status, charges_enabled, payouts_enabled, details_submitted, demo
-		FROM restaurant_stripe_connect WHERE restaurant_id = ?`, restaurantID).
+		FROM restaurant_stripe_connect WHERE restaurant_id = ?`), restaurantID).
 		Scan(&enc, &row.Status, &charges, &payouts, &dsub, &demo)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -110,17 +111,48 @@ func (s *Server) saveConnectAccount(ctx context.Context, row connectAccountRow) 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	hash := s.connectAccountHash(row.AccountID)
+	// shared_identity_isolation_v1 (reviewed tenant-isolation fix, both
+	// dialects; intentionally NOT the source behaviour): MySQL ODKU fired on
+	// PK restaurant_id OR unique account_hash and so rewrote ANOTHER
+	// restaurant's row (its account_encrypted then bound to the wrong AAD).
+	// Now every MySQL assignment only applies when the conflicting row is this
+	// restaurant's own; PG targets restaurant_id only. A hash owned by another
+	// restaurant ends as: MySQL guarded no-op (detected by the owner re-read
+	// below) or 1062/23505 on the hash key (own row re-pointed / PG) -> the
+	// same errConnectAccountTaken, and no foreign row is modified.
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_stripe_connect
 			(restaurant_id, account_encrypted, account_hash, status, charges_enabled, payouts_enabled, details_submitted, demo)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE account_encrypted = VALUES(account_encrypted), account_hash = VALUES(account_hash),
-			status = VALUES(status), charges_enabled = VALUES(charges_enabled), payouts_enabled = VALUES(payouts_enabled),
-			details_submitted = VALUES(details_submitted), demo = VALUES(demo)`,
-		row.RestaurantID, enc, s.connectAccountHash(row.AccountID), row.Status,
-		boolToTinyint(row.ChargesEnabled), boolToTinyint(row.PayoutsEnabled), boolToTinyint(row.DetailsSubmitted), boolToTinyint(row.Demo))
-	return err
+		ON DUPLICATE KEY UPDATE account_encrypted = IF(restaurant_id = VALUES(restaurant_id), VALUES(account_encrypted), account_encrypted), account_hash = IF(restaurant_id = VALUES(restaurant_id), VALUES(account_hash), account_hash), status = IF(restaurant_id = VALUES(restaurant_id), VALUES(status), status), charges_enabled = IF(restaurant_id = VALUES(restaurant_id), VALUES(charges_enabled), charges_enabled), payouts_enabled = IF(restaurant_id = VALUES(restaurant_id), VALUES(payouts_enabled), payouts_enabled), details_submitted = IF(restaurant_id = VALUES(restaurant_id), VALUES(details_submitted), details_submitted), demo = IF(restaurant_id = VALUES(restaurant_id), VALUES(demo), demo)`, `
+		INSERT INTO restaurant_stripe_connect
+			(restaurant_id, account_encrypted, account_hash, status, charges_enabled, payouts_enabled, details_submitted, demo)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET account_encrypted = EXCLUDED.account_encrypted, account_hash = EXCLUDED.account_hash,
+			status = EXCLUDED.status, charges_enabled = EXCLUDED.charges_enabled, payouts_enabled = EXCLUDED.payouts_enabled,
+			details_submitted = EXCLUDED.details_submitted, demo = EXCLUDED.demo`),
+		row.RestaurantID, enc, hash, row.Status, boolToTinyint(row.ChargesEnabled), boolToTinyint(row.PayoutsEnabled), boolToTinyint(row.DetailsSubmitted), boolToTinyint(row.Demo))
+	if sqldb.IsUniqueViolationOn(err, "uq_restaurant_stripe_connect_hash", "ix__restaurant_stripe_connect__uq_restaurant_stripe_co_cb13e095") {
+		return errConnectAccountTaken
+	}
+	if err != nil {
+		return err
+	}
+	var owner int
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT restaurant_id FROM restaurant_stripe_connect WHERE account_hash = ?`, `SELECT restaurant_id FROM restaurant_stripe_connect WHERE app.norm_ascii(account_hash) = app.norm_ascii(?)`), hash).Scan(&owner); err != nil {
+		return err
+	}
+	if owner != row.RestaurantID {
+		log.Printf("[shared_identity_isolation_v1] restaurant=%d stripe connect account already linked to another restaurant", row.RestaurantID)
+		return errConnectAccountTaken
+	}
+	return nil
 }
+
+// errConnectAccountTaken: the Stripe account (by lookup hash) belongs to
+// another restaurant; callers keep their existing "could not save" responses.
+var errConnectAccountTaken = errors.New("la cuenta de cobros ya está vinculada a otro restaurante")
 
 func connectStatusFor(a *integrations.ConnectAccount) string {
 	switch {
@@ -347,7 +379,7 @@ func (s *Server) connectDeleteBlockers(ctx context.Context, rid int, row *connec
 		return out
 	}
 	var open int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_checkouts WHERE restaurant_id = ? AND provider = 'stripe' AND status IN (?, ?) AND (expires_at IS NULL OR expires_at > NOW())`,
+	_ = s.db.QueryRowContext(ctx, nativeSQL(`SELECT COUNT(*) FROM booking_checkouts WHERE restaurant_id = ? AND provider = 'stripe' AND status IN (?, ?) AND (expires_at IS NULL OR expires_at > NOW())`, `SELECT COUNT(*) FROM booking_checkouts WHERE restaurant_id = ? AND provider = 'stripe' AND status IN (?, ?) AND (expires_at IS NULL OR expires_at > date_trunc('second', statement_timestamp()))`),
 		rid, checkoutStatusPending, checkoutStatusPaid).Scan(&open)
 	if open > 0 {
 		out = append(out, connectDeleteBlock{Code: "CHECKOUTS_OPEN", OpenCheckouts: open,
@@ -442,7 +474,7 @@ func (s *Server) handleBOStripeConnectDisconnect(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM restaurant_stripe_connect WHERE restaurant_id = ?`, rid); err != nil {
+	if _, err := s.db.ExecContext(ctx, portableSQL(`DELETE FROM restaurant_stripe_connect WHERE restaurant_id = ?`), rid); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "No se pudo eliminar la cuenta de cobros"})
 		return
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // A comida product is either RAW (bought and sold as-is, e.g. a bottled soft
@@ -45,7 +46,7 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		// Scoping the lookup by tenant is what stops one restaurant from
 		// linking another restaurant's recipe.
 		if err := s.db.QueryRowContext(r.Context(),
-			`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+			portableSQL(`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 			a.ActiveRestaurantID, *in.StockRecipeID).Scan(&output); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Ficha tecnica no valida")
 			return
@@ -74,7 +75,7 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 			skuSource = "postres"
 		default:
 			if err := s.db.QueryRowContext(r.Context(),
-				`SELECT COALESCE(source_type,'') FROM comida_items WHERE restaurant_id=? AND id=?`,
+				portableSQL(`SELECT COALESCE(source_type,'') FROM comida_items WHERE restaurant_id=? AND id=?`),
 				a.ActiveRestaurantID, itemID).Scan(&skuSource); err != nil {
 				skuSource = ""
 			}
@@ -82,7 +83,7 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		if skuSource != "" {
 			sku := fmt.Sprintf("catalog:%s:%d", strings.ToLower(skuSource), itemID)
 			if err := s.db.QueryRowContext(r.Context(),
-				`SELECT id FROM stock_items WHERE restaurant_id=? AND sku=? AND deleted_at IS NULL`,
+				nativeSQL(`SELECT id FROM stock_items WHERE restaurant_id=? AND sku=? AND deleted_at IS NULL`, `SELECT id FROM stock_items WHERE restaurant_id=? AND app.norm(sku) = app.norm(?) AND deleted_at IS NULL`),
 				a.ActiveRestaurantID, sku).Scan(&ownItem); err == nil {
 				outputItemID = ownItem
 			}
@@ -102,6 +103,9 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 	 WHERE restaurant_id=? AND id=?`
 	sourceTable := "comida_items"
 	sourceIDCond := "id=?"
+	// PG twins (sqldb_native_pg_v1): POSTRES / NUM keep their source case and
+	// must be quoted; the other statements are identical on both dialects.
+	pgUpdateSQL, pgTable, pgCond := updateSQL, sourceTable, sourceIDCond
 	sourceIDArgs := func() []any { return []any{itemID} }
 	switch strings.ToLower(strings.TrimSpace(in.Source)) {
 	case "vinos":
@@ -109,12 +113,15 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		 WHERE restaurant_id=? AND id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?)`
 		sourceTable = "group_menu_wines_v2"
 		sourceIDCond = "id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?)"
+		pgUpdateSQL, pgTable, pgCond = updateSQL, sourceTable, sourceIDCond
 		sourceIDArgs = func() []any { return []any{a.ActiveRestaurantID, itemID} }
 	case "postres":
 		updateSQL = `UPDATE POSTRES SET production_type=?, stock_recipe_id=?, stock_item_id=?
 		 WHERE restaurant_id=? AND NUM=?`
 		sourceTable = "POSTRES"
 		sourceIDCond = "NUM=?"
+		pgUpdateSQL = `UPDATE "POSTRES" SET production_type=?, stock_recipe_id=?, stock_item_id=? WHERE restaurant_id=? AND "NUM"=?`
+		pgTable, pgCond = `"POSTRES"`, `"NUM"=?`
 	}
 	// Reverting to raw abandons the sheet. An untouched draft is discarded here
 	// so it does not accumulate as an unreachable orphan in the stock
@@ -123,14 +130,16 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 	var abandoned int64
 	if productionType == "RAW" {
 		if err := s.db.QueryRowContext(r.Context(),
-			fmt.Sprintf(`SELECT COALESCE(stock_recipe_id,0) FROM %s WHERE restaurant_id=? AND %s`,
-				sourceTable, sourceIDCond),
+			nativeSQL(fmt.Sprintf(`SELECT COALESCE(stock_recipe_id,0) FROM %s WHERE restaurant_id=? AND %s`, sourceTable, sourceIDCond),
+				fmt.Sprintf(`SELECT COALESCE(stock_recipe_id,0) FROM %s WHERE restaurant_id=? AND %s`, pgTable, pgCond)),
 			append([]any{a.ActiveRestaurantID}, sourceIDArgs()...)...).Scan(&abandoned); err != nil {
 			abandoned = 0
 		}
 	}
 
-	res, err := s.db.ExecContext(r.Context(), updateSQL,
+	// RowsAffected: MySQL counts changed rows (no clientFoundRows), PG matched
+	// rows; the existence check below makes both answer the same.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(updateSQL, pgUpdateSQL),
 		append([]any{productionType, recipeID, outputItemID, a.ActiveRestaurantID}, sourceIDArgs()...)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando el producto")
@@ -143,8 +152,8 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		// to surface as a spurious 404. Existence is checked before answering.
 		var exists int
 		err := s.db.QueryRowContext(r.Context(),
-			fmt.Sprintf(`SELECT 1 FROM %s WHERE restaurant_id=? AND %s LIMIT 1`,
-				sourceTable, sourceIDCond),
+			nativeSQL(fmt.Sprintf(`SELECT 1 FROM %s WHERE restaurant_id=? AND %s LIMIT 1`, sourceTable, sourceIDCond),
+				fmt.Sprintf(`SELECT 1 FROM %s WHERE restaurant_id=? AND %s LIMIT 1`, pgTable, pgCond)),
 			append([]any{a.ActiveRestaurantID}, sourceIDArgs()...)...).Scan(&exists)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -179,7 +188,7 @@ func (s *Server) loadSheetUsage(r *http.Request, restaurantID int, sheetID int64
 		// refuses the UNION otherwise ("illegal mix of collations"). The wine
 		// branch reports the legacy num, which is what the caller uses to open
 		// the product.
-		`SELECT id, CONVERT(COALESCE(NULLIF(titulo,''),nombre) USING utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
+		nativeSQL(`SELECT id, CONVERT(COALESCE(NULLIF(titulo,''),nombre) USING utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
 		        'COMIDA' AS source
 		   FROM comida_items WHERE restaurant_id=? AND stock_recipe_id=?
 		  UNION ALL
@@ -188,6 +197,16 @@ func (s *Server) loadSheetUsage(r *http.Request, restaurantID int, sheetID int64
 		  UNION ALL
 		 SELECT NUM, CONVERT(DESCRIPCION USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'POSTRE'
 		   FROM POSTRES WHERE restaurant_id=? AND stock_recipe_id=?`,
+			// PG: the old nondeterministic collation is the migration's mapping of utf8mb4_unicode_ci;
+			// POSTRES/NUM/DESCRIPCION keep their source case and are quoted.
+			`SELECT id::bigint, COALESCE(NULLIF(titulo,''),nombre)::text AS name, 'COMIDA' AS source
+		   FROM comida_items WHERE restaurant_id=? AND stock_recipe_id=?
+		  UNION ALL
+		 SELECT `+vinoV2NumExprPG+`, v.nombre::text, 'VINO'
+		   `+vinoV2From+` WHERE v.restaurant_id=? AND v.stock_recipe_id=?
+		  UNION ALL
+		 SELECT "NUM"::bigint, "DESCRIPCION"::text, 'POSTRE'
+		   FROM "POSTRES" WHERE restaurant_id=? AND stock_recipe_id=?`),
 		restaurantID, sheetID, restaurantID, sheetID, restaurantID, sheetID)
 	if err != nil {
 		return nil, nil, err
@@ -207,9 +226,9 @@ func (s *Server) loadSheetUsage(r *http.Request, restaurantID int, sheetID int64
 
 	// A sheet can also be an ingredient of another sheet.
 	parentRows, err := s.db.QueryContext(r.Context(),
-		`SELECT DISTINCT r.name FROM stock_recipe_components c
+		portableSQL(`SELECT DISTINCT r.name FROM stock_recipe_components c
 		   JOIN stock_recipes r ON r.restaurant_id=c.restaurant_id AND r.id=c.recipe_id
-		  WHERE c.restaurant_id=? AND c.sub_recipe_id=?`, restaurantID, sheetID)
+		  WHERE c.restaurant_id=? AND c.sub_recipe_id=?`), restaurantID, sheetID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -281,11 +300,11 @@ func (s *Server) handleBOTechnicalSheetDelete(w http.ResponseWriter, r *http.Req
 	defer tx.Rollback()
 
 	for _, statement := range []string{
-		`DELETE FROM stock_recipe_components WHERE restaurant_id=? AND recipe_id=?`,
-		`DELETE FROM stock_recipe_steps WHERE restaurant_id=? AND recipe_id=?`,
-		`DELETE FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+		portableSQL(`DELETE FROM stock_recipe_components WHERE restaurant_id=? AND recipe_id=?`),
+		portableSQL(`DELETE FROM stock_recipe_steps WHERE restaurant_id=? AND recipe_id=?`),
+		portableSQL(`DELETE FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 	} {
-		if _, err := tx.ExecContext(r.Context(), statement, a.ActiveRestaurantID, sheetID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), selectedSQL(statement), a.ActiveRestaurantID, sheetID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando la ficha")
 			return
 		}
@@ -294,14 +313,22 @@ func (s *Server) handleBOTechnicalSheetDelete(w http.ResponseWriter, r *http.Req
 	// The output item is removed only when it never moved: an item with ledger
 	// history is part of the audit trail and must stay.
 	var movements int
-	tx.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM stock_movements WHERE restaurant_id=? AND stock_item_id=?`,
-		a.ActiveRestaurantID, outputItemID).Scan(&movements)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		return tx.QueryRowContext(r.Context(),
+			portableSQL(`SELECT COUNT(*) FROM stock_movements WHERE restaurant_id=? AND stock_item_id=?`),
+			a.ActiveRestaurantID, outputItemID).Scan(&movements)
+	})
 	if movements == 0 {
-		tx.ExecContext(r.Context(), `DELETE FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=?`,
-			a.ActiveRestaurantID, outputItemID)
-		tx.ExecContext(r.Context(), `DELETE FROM stock_items WHERE restaurant_id=? AND id=?`,
-			a.ActiveRestaurantID, outputItemID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=?`),
+				a.ActiveRestaurantID, outputItemID)
+			return e
+		})
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_items WHERE restaurant_id=? AND id=?`),
+				a.ActiveRestaurantID, outputItemID)
+			return e
+		})
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -335,14 +362,21 @@ func sheetAllergensFromJSON(derivedJSON, manualJSON string) []string {
 // sheetListFrom builds the FROM/JOIN/WHERE shared by the paginated list, its
 // count and the WebSocket search, so all three can never disagree about which
 // rows a filter matches.
-func sheetListFrom(restaurantID int, query, status string, categoryID int64) (string, []any) {
+//
+// It returns the MySQL and the PostgreSQL fragment (sqldb_native_pg_v1): on PG
+// r.name carries the nondeterministic old-nondeterministic-collation collation, which PG17 cannot LIKE,
+// so the search is ILIKE on "C" (case-insensitive; accent-insensitivity of
+// utf8mb4_unicode_ci LIKE is a recorded pending delta).
+func sheetListFrom(restaurantID int, query, status string, categoryID int64) (string, string, []any) {
 	from := `FROM stock_recipes r
 	          JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id
 	          LEFT JOIN stock_categories c ON c.restaurant_id=i.restaurant_id AND c.id=i.category_id
 	         WHERE r.restaurant_id=? AND r.is_active=1`
+	pgFrom := from
 	args := []any{restaurantID}
 	if query != "" {
 		from += ` AND r.name LIKE ?`
+		pgFrom += ` AND r.name COLLATE "C" ILIKE ?`
 		args = append(args, "%"+query+"%")
 	}
 	// The API speaks of PUBLISHED sheets, but the column's enum has no such
@@ -360,18 +394,22 @@ func sheetListFrom(restaurantID int, query, status string, categoryID int64) (st
 	switch status {
 	case "PUBLISHED":
 		from += ` AND r.status='ACTIVE'`
+		pgFrom += ` AND r.status='ACTIVE'`
 	case "DRAFT":
 		from += ` AND r.status='DRAFT'`
+		pgFrom += ` AND r.status='DRAFT'`
 	case "ARCHIVED":
 		from += ` AND r.status='ARCHIVED'`
+		pgFrom += ` AND r.status='ARCHIVED'`
 	}
 	// The category belongs to the sheet's output item, which is where the
 	// stock catalogue records it.
 	if categoryID > 0 {
 		from += ` AND i.category_id=?`
+		pgFrom += ` AND i.category_id=?`
 		args = append(args, categoryID)
 	}
-	return from, args
+	return from, pgFrom, args
 }
 
 // handleBOTechnicalSheetList backs the sheet picker. Search is a simple
@@ -394,27 +432,32 @@ func (s *Server) handleBOTechnicalSheetList(w http.ResponseWriter, r *http.Reque
 	// The browser fills the product form straight from a card, so the list
 	// carries the same values the form needs. Fetching each sheet separately
 	// just to render a card would be a request per row.
-	from, args := sheetListFrom(a.ActiveRestaurantID, query, status, categoryID)
+	from, pgFrom, args := sheetListFrom(a.ActiveRestaurantID, query, status, categoryID)
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) `+from, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COUNT(*) `+from, `SELECT COUNT(*) `+pgFrom), args...).Scan(&total); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando fichas tecnicas")
 		return
 	}
 
-	querySQL := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1), COALESCE(i.image_url,''),
+	selectList := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1), COALESCE(i.image_url,''),
 	               (SELECT COUNT(*) FROM comida_items p
 	                 WHERE p.restaurant_id=r.restaurant_id AND p.stock_recipe_id=r.id),
 	               COALESCE(c.id,0), COALESCE(c.name,''),
 	               r.selling_price_gross, r.prep_time_min, COALESCE(r.instructions,''),
-	               COALESCE(r.derived_allergens_json,''), COALESCE(r.manual_allergens_json,''),
+	               %s, %s,
 	               (SELECT COUNT(*) FROM stock_recipe_components rc
 	                 WHERE rc.restaurant_id=r.restaurant_id AND rc.recipe_id=r.id),
 	               (SELECT COUNT(*) FROM stock_recipe_steps rs
 	                 WHERE rs.restaurant_id=r.restaurant_id AND rs.recipe_id=r.id)
-	          ` + from + ` ORDER BY r.name LIMIT ? OFFSET ?`
+	          `
+	// JSON columns: MySQL COALESCE(json,'') yields text; PG needs ::text first
+	// ('' is not valid jsonb).
+	querySQL := nativeSQL(
+		fmt.Sprintf(selectList, "COALESCE(r.derived_allergens_json,'')", "COALESCE(r.manual_allergens_json,'')")+from+` ORDER BY r.name LIMIT ? OFFSET ?`,
+		fmt.Sprintf(selectList, "COALESCE(r.derived_allergens_json::text,'')", "COALESCE(r.manual_allergens_json::text,'')")+pgFrom+` ORDER BY r.name LIMIT ? OFFSET ?`)
 	args = append(args, pageSize, (page-1)*pageSize)
 
-	rows, err := s.db.QueryContext(r.Context(), querySQL, args...)
+	rows, err := s.db.QueryContext(r.Context(), selectedSQL(querySQL), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando fichas tecnicas")
 		return
@@ -494,13 +537,13 @@ func (s *Server) discardUntouchedDraftSheet(r *http.Request, restaurantID int, s
 	var status string
 	var outputItemID int64
 	var components, steps int
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT r.status, r.output_item_id,
 		       (SELECT COUNT(*) FROM stock_recipe_components c
 		         WHERE c.restaurant_id=r.restaurant_id AND c.recipe_id=r.id),
 		       (SELECT COUNT(*) FROM stock_recipe_steps p
 		         WHERE p.restaurant_id=r.restaurant_id AND p.recipe_id=r.id)
-		  FROM stock_recipes r WHERE r.restaurant_id=? AND r.id=?`,
+		  FROM stock_recipes r WHERE r.restaurant_id=? AND r.id=?`),
 		restaurantID, sheetID).Scan(&status, &outputItemID, &components, &steps); err != nil {
 		return
 	}
@@ -510,10 +553,10 @@ func (s *Server) discardUntouchedDraftSheet(r *http.Request, restaurantID int, s
 
 	// Another product may have been linked to the same sheet meanwhile.
 	var stillUsed int
-	s.db.QueryRowContext(r.Context(), `
+	s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT (SELECT COUNT(*) FROM comida_items WHERE restaurant_id=? AND stock_recipe_id=?)
 		     + (SELECT COUNT(*) FROM group_menu_wines_v2 WHERE restaurant_id=? AND stock_recipe_id=?)
-		     + (SELECT COUNT(*) FROM POSTRES WHERE restaurant_id=? AND stock_recipe_id=?)`,
+		     + (SELECT COUNT(*) FROM POSTRES WHERE restaurant_id=? AND stock_recipe_id=?)`, `SELECT (SELECT COUNT(*) FROM comida_items WHERE restaurant_id=? AND stock_recipe_id=?) + (SELECT COUNT(*) FROM group_menu_wines_v2 WHERE restaurant_id=? AND stock_recipe_id=?) + (SELECT COUNT(*) FROM "POSTRES" WHERE restaurant_id=? AND stock_recipe_id=?)`),
 		restaurantID, sheetID, restaurantID, sheetID, restaurantID, sheetID).Scan(&stillUsed)
 	if stillUsed > 0 {
 		return
@@ -522,14 +565,14 @@ func (s *Server) discardUntouchedDraftSheet(r *http.Request, restaurantID int, s
 	// The output item goes too, unless it already has ledger history.
 	var movements int
 	s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM stock_movements WHERE restaurant_id=? AND stock_item_id=?`,
+		portableSQL(`SELECT COUNT(*) FROM stock_movements WHERE restaurant_id=? AND stock_item_id=?`),
 		restaurantID, outputItemID).Scan(&movements)
 
-	s.db.ExecContext(r.Context(), `DELETE FROM stock_recipes WHERE restaurant_id=? AND id=?`, restaurantID, sheetID)
+	s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_recipes WHERE restaurant_id=? AND id=?`), restaurantID, sheetID)
 	if movements == 0 {
-		s.db.ExecContext(r.Context(), `DELETE FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=?`,
+		s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=?`),
 			restaurantID, outputItemID)
-		s.db.ExecContext(r.Context(), `DELETE FROM stock_items WHERE restaurant_id=? AND id=?`,
+		s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_items WHERE restaurant_id=? AND id=?`),
 			restaurantID, outputItemID)
 	}
 }

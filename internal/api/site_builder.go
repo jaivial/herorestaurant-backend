@@ -202,13 +202,19 @@ func handleListSites(db *sql.DB) http.HandlerFunc {
 		}
 		restaurantID := auth.ActiveRestaurantID
 
-		rows, err := db.QueryContext(ctx, `
+		rows, err := db.QueryContext(ctx, nativeSQL(`
 			SELECT id, restaurant_id, name, subdomain, custom_domain, theme_config, status, 
 				   published_version_id, settings, created_at, updated_at
 			FROM site_builder_sites
 			WHERE restaurant_id = ?
 			ORDER BY updated_at DESC
-		`, restaurantID)
+		`, `
+			SELECT id, restaurant_id, name, subdomain, custom_domain, CAST(theme_config AS text), CAST(status AS text), 
+				   published_version_id, CAST(settings AS text), created_at, updated_at
+			FROM site_builder_sites
+			WHERE restaurant_id = ?
+			ORDER BY updated_at DESC
+		`), restaurantID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list sites")
 			return
@@ -263,14 +269,24 @@ func handleCreateSite(db *sql.DB) http.HandlerFunc {
 			httpx.WriteError(w, http.StatusBadRequest, "Name and subdomain are required")
 			return
 		}
+		// padding_domain_identity_v1: uk_subdomain is global routing; no
+		// existing subdomain normalizer exists, so a value with edge ASCII
+		// spaces (PAD-equal on MySQL, distinct on PG) is refused, not trimmed.
+		if strings.Trim(input.Subdomain, " ") != input.Subdomain {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid subdomain")
+			return
+		}
 
 		id := uuid.New().String()
 		now := time.Now()
 
-		_, err := db.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_sites (id, restaurant_id, name, subdomain, theme_config, settings, status, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-		`, id, restaurantID, input.Name, input.Subdomain, input.ThemeConfig, input.Settings, now, now)
+		`, `
+			INSERT INTO site_builder_sites (id, restaurant_id, name, subdomain, theme_config, settings, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), 'draft', ?, ?)
+		`), id, restaurantID, input.Name, input.Subdomain, input.ThemeConfig, input.Settings, now, now)
 
 		if err != nil {
 			if strings.Contains(err.Error(), "uk_subdomain") {
@@ -284,10 +300,13 @@ func handleCreateSite(db *sql.DB) http.HandlerFunc {
 		// Create default home page
 		homePageID := uuid.New().String()
 		defaultTree := json.RawMessage(`{"id":"page_root","type":"page","children":[]}`)
-		_, err = db.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_pages (id, site_id, slug, name, page_type, tree, is_home, created_at, updated_at)
 			VALUES (?, ?, '/', 'Home', 'static', ?, 1, ?, ?)
-		`, homePageID, id, defaultTree, now, now)
+		`, `
+			INSERT INTO site_builder_pages (id, site_id, slug, name, page_type, tree, is_home, created_at, updated_at)
+			VALUES (?, ?, '/', 'Home', 'static', CAST(? AS jsonb), 1, ?, ?)
+		`), homePageID, id, defaultTree, now, now)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create default page")
 			return
@@ -370,19 +389,46 @@ func handleUpdateSite(db *sql.DB) http.HandlerFunc {
 			args = append(args, *input.Name)
 		}
 		if input.Subdomain != nil {
+			// padding_domain_identity_v1: same refusal as create.
+			if strings.Trim(*input.Subdomain, " ") != *input.Subdomain {
+				httpx.WriteError(w, http.StatusBadRequest, "Invalid subdomain")
+				return
+			}
 			updates = append(updates, "subdomain = ?")
 			args = append(args, *input.Subdomain)
 		}
 		if input.CustomDomain != nil {
+			// padding_domain_identity_v1: uk_custom_domain is global; a non-empty
+			// value takes the existing normalizePremiumDomain identity (invalid
+			// -> 400). "" keeps the source behaviour (stored as given).
+			cd := *input.CustomDomain
+			if cd != "" {
+				if cd = normalizePremiumDomain(cd); cd == "" {
+					httpx.WriteError(w, http.StatusBadRequest, "Invalid custom domain")
+					return
+				}
+				// padding_domain_identity_v2: the same restaurant_domains ownership
+				// guard as the mapping create (domainOwnedByOther, site tenant). A
+				// domain another restaurant owns is refused (409); a lookup error
+				// fails closed (500). custom_domain stays display-only here: no
+				// mapping, route or DNS verification is created or activated.
+				if foreign, err := domainOwnedByOther(ctx, db, cd, site.RestaurantID, false); err != nil {
+					httpx.WriteError(w, http.StatusInternalServerError, "Failed to update site")
+					return
+				} else if foreign {
+					httpx.WriteError(w, http.StatusConflict, "Domain already in use")
+					return
+				}
+			}
 			updates = append(updates, "custom_domain = ?")
-			args = append(args, *input.CustomDomain)
+			args = append(args, cd)
 		}
 		if input.ThemeConfig != nil {
-			updates = append(updates, "theme_config = ?")
+			updates = append(updates, sqlFragment("theme_config = ?", "theme_config = CAST(? AS jsonb)"))
 			args = append(args, input.ThemeConfig)
 		}
 		if input.Settings != nil {
-			updates = append(updates, "settings = ?")
+			updates = append(updates, sqlFragment("settings = ?", "settings = CAST(? AS jsonb)"))
 			args = append(args, input.Settings)
 		}
 
@@ -396,7 +442,7 @@ func handleUpdateSite(db *sql.DB) http.HandlerFunc {
 		args = append(args, siteID)
 
 		query := "UPDATE site_builder_sites SET " + strings.Join(updates, ", ") + " WHERE id = ?"
-		_, err = db.ExecContext(ctx, query, args...)
+		_, err = db.ExecContext(ctx, portableSQL(query), args...)
 		if err != nil {
 			if strings.Contains(err.Error(), "uk_subdomain") {
 				httpx.WriteError(w, http.StatusConflict, "Subdomain already in use")
@@ -432,7 +478,7 @@ func handleDeleteSite(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.ExecContext(ctx, "DELETE FROM site_builder_sites WHERE id = ?", siteID)
+		_, err = db.ExecContext(ctx, nativeSQL("DELETE FROM site_builder_sites WHERE id = ?", "DELETE FROM site_builder_sites WHERE app.norm_ascii(id) = app.norm_ascii(?)"), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to delete site")
 			return
@@ -458,12 +504,17 @@ func handleListPages(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		rows, err := db.QueryContext(ctx, `
+		rows, err := db.QueryContext(ctx, nativeSQL(`
 			SELECT id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at
 			FROM site_builder_pages
 			WHERE site_id = ?
 			ORDER BY is_home DESC, name ASC
-		`, siteID)
+		`, `
+			SELECT id, site_id, slug, name, CAST(page_type AS text), CAST(tree AS text), CAST(seo_config AS text), CAST(collection_binding AS text), is_home, created_at, updated_at
+			FROM site_builder_pages
+			WHERE site_id = ?
+			ORDER BY is_home DESC, name COLLATE "es-x-icu" ASC
+		`), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list pages")
 			return
@@ -533,10 +584,13 @@ func handleCreatePage(db *sql.DB) http.HandlerFunc {
 		id := uuid.New().String()
 		now := time.Now()
 
-		_, err := db.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_pages (id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, siteID, input.Slug, input.Name, input.PageType, input.Tree, input.SEOConfig, input.CollectionBinding, input.IsHome, now, now)
+		`, `
+			INSERT INTO site_builder_pages (id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(CAST(? AS boolean) AS integer), ?, ?)
+		`), id, siteID, input.Slug, input.Name, mysqlLowerEnumArg(input.PageType), input.Tree, input.SEOConfig, input.CollectionBinding, input.IsHome, now, now)
 
 		if err != nil {
 			if strings.Contains(err.Error(), "uk_site_slug") {
@@ -561,11 +615,15 @@ func handleGetPage(db *sql.DB) http.HandlerFunc {
 
 		var p SiteBuilderPages
 		var siteID string
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(ctx, nativeSQL(`
 			SELECT id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at
 			FROM site_builder_pages
 			WHERE id = ?
-		`, pageID).Scan(
+		`, `
+			SELECT id, site_id, slug, name, CAST(page_type AS text), CAST(tree AS text), CAST(seo_config AS text), CAST(collection_binding AS text), is_home, created_at, updated_at
+			FROM site_builder_pages
+			WHERE app.norm_ascii(id) = app.norm_ascii(?)
+		`), pageID).Scan(
 			&p.ID, &siteID, &p.Slug, &p.Name, &p.PageType, &p.Tree,
 			&p.SEOConfig, &p.CollectionBinding, &p.IsHome, &p.CreatedAt, &p.UpdatedAt,
 		)
@@ -597,7 +655,7 @@ func handleUpdatePage(db *sql.DB) http.HandlerFunc {
 		pageID := chi.URLParam(r, "pageId")
 
 		var siteID string
-		err := db.QueryRowContext(ctx, "SELECT site_id FROM site_builder_pages WHERE id = ?", pageID).Scan(&siteID)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT site_id FROM site_builder_pages WHERE id = ?", "SELECT site_id FROM site_builder_pages WHERE app.norm_ascii(id) = app.norm_ascii(?)"), pageID).Scan(&siteID)
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Page not found")
 			return
@@ -640,22 +698,22 @@ func handleUpdatePage(db *sql.DB) http.HandlerFunc {
 		}
 		if input.PageType != nil {
 			updates = append(updates, "page_type = ?")
-			args = append(args, *input.PageType)
+			args = append(args, mysqlLowerEnumArg(*input.PageType))
 		}
 		if input.Tree != nil {
-			updates = append(updates, "tree = ?")
+			updates = append(updates, sqlFragment("tree = ?", "tree = CAST(? AS jsonb)"))
 			args = append(args, input.Tree)
 		}
 		if input.SEOConfig != nil {
-			updates = append(updates, "seo_config = ?")
+			updates = append(updates, sqlFragment("seo_config = ?", "seo_config = CAST(? AS jsonb)"))
 			args = append(args, input.SEOConfig)
 		}
 		if input.CollectionBinding != nil {
-			updates = append(updates, "collection_binding = ?")
+			updates = append(updates, sqlFragment("collection_binding = ?", "collection_binding = CAST(? AS jsonb)"))
 			args = append(args, input.CollectionBinding)
 		}
 		if input.IsHome != nil {
-			updates = append(updates, "is_home = ?")
+			updates = append(updates, sqlFragment("is_home = ?", "is_home = CAST(CAST(? AS boolean) AS integer)"))
 			args = append(args, *input.IsHome)
 		}
 
@@ -669,7 +727,7 @@ func handleUpdatePage(db *sql.DB) http.HandlerFunc {
 		args = append(args, pageID)
 
 		query := "UPDATE site_builder_pages SET " + strings.Join(updates, ", ") + " WHERE id = ?"
-		_, err = db.ExecContext(ctx, query, args...)
+		_, err = db.ExecContext(ctx, portableSQL(query), args...)
 		if err != nil {
 			if strings.Contains(err.Error(), "uk_site_slug") {
 				httpx.WriteError(w, http.StatusConflict, "Page slug already exists")
@@ -692,7 +750,7 @@ func handleDeletePage(db *sql.DB) http.HandlerFunc {
 
 		var siteID string
 		var isHome bool
-		err := db.QueryRowContext(ctx, "SELECT site_id, is_home FROM site_builder_pages WHERE id = ?", pageID).Scan(&siteID, &isHome)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT site_id, is_home FROM site_builder_pages WHERE id = ?", "SELECT site_id, is_home FROM site_builder_pages WHERE app.norm_ascii(id) = app.norm_ascii(?)"), pageID).Scan(&siteID, &isHome)
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Page not found")
 			return
@@ -712,7 +770,7 @@ func handleDeletePage(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.ExecContext(ctx, "DELETE FROM site_builder_pages WHERE id = ?", pageID)
+		_, err = db.ExecContext(ctx, nativeSQL("DELETE FROM site_builder_pages WHERE id = ?", "DELETE FROM site_builder_pages WHERE app.norm_ascii(id) = app.norm_ascii(?)"), pageID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to delete page")
 			return
@@ -740,22 +798,30 @@ func handleListAssets(db *sql.DB) http.HandlerFunc {
 
 		assetType := r.URL.Query().Get("type")
 
-		query := `
+		query := sqlFragment(`
 			SELECT id, site_id, type, filename, original_filename, url, thumbnail_url,
 				   mime_type, file_size, width, height, alt_text, metadata, created_at
 			FROM site_builder_assets
 			WHERE site_id = ?
-		`
+		`, `
+			SELECT id, site_id, CAST(type AS text), filename, original_filename, url, thumbnail_url,
+				   mime_type, file_size, width, height, alt_text, CAST(metadata AS text), created_at
+			FROM site_builder_assets
+			WHERE site_id = ?
+		`)
 		args := []interface{}{siteID}
 
 		if assetType != "" {
-			query += " AND type = ?"
+			// MySQL compares the ENUM with a string under the column collation and
+			// an unknown value just matches nothing; a PG enum cast would raise
+			// 22P02. Compare the label as text under the imported old-nondeterministic-collation collation.
+			query += sqlFragment(" AND type = ?", " AND app.norm(CAST(type AS text)) = app.norm(?)")
 			args = append(args, assetType)
 		}
 
 		query += " ORDER BY created_at DESC"
 
-		rows, err := db.QueryContext(ctx, query, args...)
+		rows, err := db.QueryContext(ctx, portableSQL(query), args...)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list assets")
 			return
@@ -827,10 +893,13 @@ func handleUploadAsset(db *sql.DB) http.HandlerFunc {
 		id := uuid.New().String()
 		now := time.Now()
 
-		_, err := db.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_assets (id, site_id, type, filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, metadata, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, siteID, input.Type, input.Filename, input.OriginalFilename, input.URL, input.ThumbnailURL, input.MimeType, input.FileSize, input.Width, input.Height, input.AltText, input.Metadata, now)
+		`, `
+			INSERT INTO site_builder_assets (id, site_id, type, filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, metadata, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?)
+		`), id, siteID, mysqlLowerEnumArg(input.Type), input.Filename, input.OriginalFilename, input.URL, input.ThumbnailURL, input.MimeType, input.FileSize, input.Width, input.Height, input.AltText, input.Metadata, now)
 
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create asset")
@@ -851,12 +920,17 @@ func handleGetAsset(db *sql.DB) http.HandlerFunc {
 
 		var a SiteBuilderAssets
 		var siteID string
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(ctx, nativeSQL(`
 			SELECT id, site_id, type, filename, original_filename, url, thumbnail_url,
 				   mime_type, file_size, width, height, alt_text, metadata, created_at
 			FROM site_builder_assets
 			WHERE id = ?
-		`, assetID).Scan(
+		`, `
+			SELECT id, site_id, CAST(type AS text), filename, original_filename, url, thumbnail_url,
+				   mime_type, file_size, width, height, alt_text, CAST(metadata AS text), created_at
+			FROM site_builder_assets
+			WHERE app.norm_ascii(id) = app.norm_ascii(?)
+		`), assetID).Scan(
 			&a.ID, &siteID, &a.Type, &a.Filename, &a.OriginalFilename,
 			&a.URL, &a.ThumbnailURL, &a.MimeType, &a.FileSize, &a.Width,
 			&a.Height, &a.AltText, &a.Metadata, &a.CreatedAt,
@@ -889,7 +963,7 @@ func handleDeleteAsset(db *sql.DB) http.HandlerFunc {
 		assetID := chi.URLParam(r, "assetId")
 
 		var siteID string
-		err := db.QueryRowContext(ctx, "SELECT site_id FROM site_builder_assets WHERE id = ?", assetID).Scan(&siteID)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT site_id FROM site_builder_assets WHERE id = ?", "SELECT site_id FROM site_builder_assets WHERE app.norm_ascii(id) = app.norm_ascii(?)"), assetID).Scan(&siteID)
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Asset not found")
 			return
@@ -904,7 +978,7 @@ func handleDeleteAsset(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.ExecContext(ctx, "DELETE FROM site_builder_assets WHERE id = ?", assetID)
+		_, err = db.ExecContext(ctx, nativeSQL("DELETE FROM site_builder_assets WHERE id = ?", "DELETE FROM site_builder_assets WHERE app.norm_ascii(id) = app.norm_ascii(?)"), assetID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to delete asset")
 			return
@@ -930,14 +1004,21 @@ func handleListVersions(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		rows, err := db.QueryContext(ctx, `
+		rows, err := db.QueryContext(ctx, nativeSQL(`
 			SELECT id, site_id, version_number, pages_snapshot, theme_snapshot, assets_snapshot,
 				   settings_snapshot, status, change_summary, storage_path, published_at, created_at
 			FROM site_builder_versions
 			WHERE site_id = ?
 			ORDER BY version_number DESC
 			LIMIT 50
-		`, siteID)
+		`, `
+			SELECT id, site_id, version_number, CAST(pages_snapshot AS text), CAST(theme_snapshot AS text), CAST(assets_snapshot AS text),
+				   CAST(settings_snapshot AS text), CAST(status AS text), change_summary, storage_path, published_at, created_at
+			FROM site_builder_versions
+			WHERE app.norm_ascii(site_id) = app.norm_ascii(?)
+			ORDER BY version_number DESC
+			LIMIT 50
+		`), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list versions")
 			return
@@ -983,7 +1064,7 @@ func handleCreateVersion(db *sql.DB) http.HandlerFunc {
 
 		// Get next version number
 		var maxVersion int
-		err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version_number), 0) FROM site_builder_versions WHERE site_id = ?", siteID).Scan(&maxVersion)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT COALESCE(MAX(version_number), 0) FROM site_builder_versions WHERE site_id = ?", "SELECT COALESCE(MAX(version_number), 0) FROM site_builder_versions WHERE app.norm_ascii(site_id) = app.norm_ascii(?)"), siteID).Scan(&maxVersion)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get version number")
 			return
@@ -991,14 +1072,14 @@ func handleCreateVersion(db *sql.DB) http.HandlerFunc {
 
 		// Gather snapshots
 		var themeConfig, settings *json.RawMessage
-		err = db.QueryRowContext(ctx, "SELECT theme_config, settings FROM site_builder_sites WHERE id = ?", siteID).Scan(&themeConfig, &settings)
+		err = db.QueryRowContext(ctx, nativeSQL("SELECT theme_config, settings FROM site_builder_sites WHERE id = ?", "SELECT CAST(theme_config AS text), CAST(settings AS text) FROM site_builder_sites WHERE app.norm_ascii(id) = app.norm_ascii(?)"), siteID).Scan(&themeConfig, &settings)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get site data")
 			return
 		}
 
 		// Get pages
-		rows, err := db.QueryContext(ctx, "SELECT id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at FROM site_builder_pages WHERE site_id = ?", siteID)
+		rows, err := db.QueryContext(ctx, nativeSQL("SELECT id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at FROM site_builder_pages WHERE site_id = ?", "SELECT id, site_id, slug, name, CAST(page_type AS text), CAST(tree AS text), CAST(seo_config AS text), CAST(collection_binding AS text), is_home, created_at, updated_at FROM site_builder_pages WHERE site_id = ?"), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get pages")
 			return
@@ -1015,7 +1096,7 @@ func handleCreateVersion(db *sql.DB) http.HandlerFunc {
 		pagesSnapshot := json.RawMessage(pagesJSON)
 
 		// Get assets
-		assetRows, err := db.QueryContext(ctx, "SELECT id, site_id, type, filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, metadata, created_at FROM site_builder_assets WHERE site_id = ?", siteID)
+		assetRows, err := db.QueryContext(ctx, nativeSQL("SELECT id, site_id, type, filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, metadata, created_at FROM site_builder_assets WHERE site_id = ?", "SELECT id, site_id, CAST(type AS text), filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, CAST(metadata AS text), created_at FROM site_builder_assets WHERE site_id = ?"), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get assets")
 			return
@@ -1034,10 +1115,13 @@ func handleCreateVersion(db *sql.DB) http.HandlerFunc {
 		id := uuid.New().String()
 		now := time.Now()
 
-		_, err = db.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_versions (id, site_id, version_number, pages_snapshot, theme_snapshot, assets_snapshot, settings_snapshot, status, change_summary, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-		`, id, siteID, maxVersion+1, pagesSnapshot, themeConfig, assetsSnapshot, settings, input.ChangeSummary, now)
+		`, `
+			INSERT INTO site_builder_versions (id, site_id, version_number, pages_snapshot, theme_snapshot, assets_snapshot, settings_snapshot, status, change_summary, created_at)
+			VALUES (?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), 'draft', ?, ?)
+		`), id, siteID, maxVersion+1, pagesSnapshot, themeConfig, assetsSnapshot, settings, input.ChangeSummary, now)
 
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create version")
@@ -1059,12 +1143,17 @@ func handleGetVersion(db *sql.DB) http.HandlerFunc {
 
 		var v SiteBuilderVersions
 		var siteID string
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(ctx, nativeSQL(`
 			SELECT id, site_id, version_number, pages_snapshot, theme_snapshot, assets_snapshot,
 				   settings_snapshot, status, change_summary, storage_path, published_at, created_at
 			FROM site_builder_versions
 			WHERE id = ?
-		`, versionID).Scan(
+		`, `
+			SELECT id, site_id, version_number, CAST(pages_snapshot AS text), CAST(theme_snapshot AS text), CAST(assets_snapshot AS text),
+				   CAST(settings_snapshot AS text), CAST(status AS text), change_summary, storage_path, published_at, created_at
+			FROM site_builder_versions
+			WHERE app.norm_ascii(id) = app.norm_ascii(?)
+		`), versionID).Scan(
 			&v.ID, &siteID, &v.VersionNumber, &v.PagesSnapshot, &v.ThemeSnapshot,
 			&v.AssetsSnapshot, &v.SettingsSnapshot, &v.Status, &v.ChangeSummary,
 			&v.StoragePath, &v.PublishedAt, &v.CreatedAt,
@@ -1100,11 +1189,15 @@ func handleListComponents(db *sql.DB) http.HandlerFunc {
 		ctx := r.Context()
 		category := r.URL.Query().Get("category")
 
-		query := `
+		query := sqlFragment(`
 			SELECT id, type, category, label, description, props_schema, style_schema, bindings_schema, nesting_rules, icon, thumbnail_url, is_active, sort_order
 			FROM site_builder_component_registry
 			WHERE is_active = 1
-		`
+		`, `
+			SELECT id, type, category, label, description, CAST(props_schema AS text), CAST(style_schema AS text), CAST(bindings_schema AS text), CAST(nesting_rules AS text), icon, thumbnail_url, is_active, sort_order
+			FROM site_builder_component_registry
+			WHERE is_active = 1
+		`)
 		args := []interface{}{}
 
 		if category != "" {
@@ -1114,7 +1207,7 @@ func handleListComponents(db *sql.DB) http.HandlerFunc {
 
 		query += " ORDER BY sort_order ASC, label ASC"
 
-		rows, err := db.QueryContext(ctx, query, args...)
+		rows, err := db.QueryContext(ctx, portableSQL(query), args...)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list components")
 			return
@@ -1149,11 +1242,15 @@ func handleGetComponentByType(db *sql.DB) http.HandlerFunc {
 		componentType := chi.URLParam(r, "type")
 
 		var c SiteBuilderComponentRegistry
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(ctx, nativeSQL(`
 			SELECT id, type, category, label, description, props_schema, style_schema, bindings_schema, nesting_rules, icon, thumbnail_url, is_active, sort_order
 			FROM site_builder_component_registry
 			WHERE type = ? AND is_active = 1
-		`, componentType).Scan(
+		`, `
+			SELECT id, type, category, label, description, CAST(props_schema AS text), CAST(style_schema AS text), CAST(bindings_schema AS text), CAST(nesting_rules AS text), icon, thumbnail_url, is_active, sort_order
+			FROM site_builder_component_registry
+			WHERE app.norm(type) = app.norm(?) AND is_active = 1
+		`), componentType).Scan(
 			&c.ID, &c.Type, &c.Category, &c.Label, &c.Description,
 			&c.PropsSchema, &c.StyleSchema, &c.BindingsSchema, &c.NestingRules,
 			&c.Icon, &c.ThumbnailURL, &c.IsActive, &c.SortOrder,
@@ -1189,12 +1286,17 @@ func handleListBindings(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		rows, err := db.QueryContext(ctx, `
+		rows, err := db.QueryContext(ctx, nativeSQL(`
 			SELECT id, site_id, page_id, node_id, resource_type, query_config, refresh_mode, cache_ttl, created_at
 			FROM site_builder_bindings
 			WHERE site_id = ?
 			ORDER BY created_at DESC
-		`, siteID)
+		`, `
+			SELECT id, site_id, page_id, node_id, resource_type, CAST(query_config AS text), CAST(refresh_mode AS text), cache_ttl, created_at
+			FROM site_builder_bindings
+			WHERE site_id = ?
+			ORDER BY created_at DESC
+		`), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list bindings")
 			return
@@ -1258,10 +1360,13 @@ func handleCreateBinding(db *sql.DB) http.HandlerFunc {
 		id := uuid.New().String()
 		now := time.Now()
 
-		_, err := db.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_bindings (id, site_id, page_id, node_id, resource_type, query_config, refresh_mode, cache_ttl, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, siteID, input.PageID, input.NodeID, input.ResourceType, input.QueryConfig, input.RefreshMode, input.CacheTTL, now)
+		`, `
+			INSERT INTO site_builder_bindings (id, site_id, page_id, node_id, resource_type, query_config, refresh_mode, cache_ttl, created_at)
+			VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?)
+		`), id, siteID, input.PageID, input.NodeID, input.ResourceType, input.QueryConfig, mysqlLowerEnumArg(input.RefreshMode), input.CacheTTL, now)
 
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create binding")
@@ -1281,7 +1386,7 @@ func handleUpdateBinding(db *sql.DB) http.HandlerFunc {
 		bindingID := chi.URLParam(r, "bindingId")
 
 		var siteID string
-		err := db.QueryRowContext(ctx, "SELECT site_id FROM site_builder_bindings WHERE id = ?", bindingID).Scan(&siteID)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT site_id FROM site_builder_bindings WHERE id = ?", "SELECT site_id FROM site_builder_bindings WHERE app.norm_ascii(id) = app.norm_ascii(?)"), bindingID).Scan(&siteID)
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Binding not found")
 			return
@@ -1311,7 +1416,7 @@ func handleUpdateBinding(db *sql.DB) http.HandlerFunc {
 		args := []interface{}{}
 
 		if input.QueryConfig != nil {
-			updates = append(updates, "query_config = ?")
+			updates = append(updates, sqlFragment("query_config = ?", "query_config = CAST(? AS jsonb)"))
 			args = append(args, input.QueryConfig)
 		}
 		if input.RefreshMode != nil {
@@ -1330,7 +1435,7 @@ func handleUpdateBinding(db *sql.DB) http.HandlerFunc {
 
 		args = append(args, bindingID)
 		query := "UPDATE site_builder_bindings SET " + strings.Join(updates, ", ") + " WHERE id = ?"
-		_, err = db.ExecContext(ctx, query, args...)
+		_, err = db.ExecContext(ctx, portableSQL(query), args...)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to update binding")
 			return
@@ -1348,7 +1453,7 @@ func handleDeleteBinding(db *sql.DB) http.HandlerFunc {
 		bindingID := chi.URLParam(r, "bindingId")
 
 		var siteID string
-		err := db.QueryRowContext(ctx, "SELECT site_id FROM site_builder_bindings WHERE id = ?", bindingID).Scan(&siteID)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT site_id FROM site_builder_bindings WHERE id = ?", "SELECT site_id FROM site_builder_bindings WHERE app.norm_ascii(id) = app.norm_ascii(?)"), bindingID).Scan(&siteID)
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Binding not found")
 			return
@@ -1363,7 +1468,7 @@ func handleDeleteBinding(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.ExecContext(ctx, "DELETE FROM site_builder_bindings WHERE id = ?", bindingID)
+		_, err = db.ExecContext(ctx, nativeSQL("DELETE FROM site_builder_bindings WHERE id = ?", "DELETE FROM site_builder_bindings WHERE app.norm_ascii(id) = app.norm_ascii(?)"), bindingID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to delete binding")
 			return
@@ -1391,7 +1496,7 @@ func handlePublishSite(db *sql.DB) http.HandlerFunc {
 
 		// Create a new version snapshot
 		var maxVersion int
-		err := db.QueryRowContext(ctx, "SELECT COALESCE(MAX(version_number), 0) FROM site_builder_versions WHERE site_id = ?", siteID).Scan(&maxVersion)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT COALESCE(MAX(version_number), 0) FROM site_builder_versions WHERE site_id = ?", "SELECT COALESCE(MAX(version_number), 0) FROM site_builder_versions WHERE app.norm_ascii(site_id) = app.norm_ascii(?)"), siteID).Scan(&maxVersion)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get version number")
 			return
@@ -1399,14 +1504,14 @@ func handlePublishSite(db *sql.DB) http.HandlerFunc {
 
 		// Gather snapshots
 		var themeConfig, settings *json.RawMessage
-		err = db.QueryRowContext(ctx, "SELECT theme_config, settings FROM site_builder_sites WHERE id = ?", siteID).Scan(&themeConfig, &settings)
+		err = db.QueryRowContext(ctx, nativeSQL("SELECT theme_config, settings FROM site_builder_sites WHERE id = ?", "SELECT CAST(theme_config AS text), CAST(settings AS text) FROM site_builder_sites WHERE app.norm_ascii(id) = app.norm_ascii(?)"), siteID).Scan(&themeConfig, &settings)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get site data")
 			return
 		}
 
 		// Get pages
-		rows, err := db.QueryContext(ctx, "SELECT id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at FROM site_builder_pages WHERE site_id = ?", siteID)
+		rows, err := db.QueryContext(ctx, nativeSQL("SELECT id, site_id, slug, name, page_type, tree, seo_config, collection_binding, is_home, created_at, updated_at FROM site_builder_pages WHERE site_id = ?", "SELECT id, site_id, slug, name, CAST(page_type AS text), CAST(tree AS text), CAST(seo_config AS text), CAST(collection_binding AS text), is_home, created_at, updated_at FROM site_builder_pages WHERE site_id = ?"), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to get pages")
 			return
@@ -1423,7 +1528,7 @@ func handlePublishSite(db *sql.DB) http.HandlerFunc {
 		pagesSnapshot := json.RawMessage(pagesJSON)
 
 		// Get assets
-		assetRows, _ := db.QueryContext(ctx, "SELECT id, site_id, type, filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, metadata, created_at FROM site_builder_assets WHERE site_id = ?", siteID)
+		assetRows, _ := db.QueryContext(ctx, nativeSQL("SELECT id, site_id, type, filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, metadata, created_at FROM site_builder_assets WHERE site_id = ?", "SELECT id, site_id, CAST(type AS text), filename, original_filename, url, thumbnail_url, mime_type, file_size, width, height, alt_text, CAST(metadata AS text), created_at FROM site_builder_assets WHERE site_id = ?"), siteID)
 		defer assetRows.Close()
 		assets := []SiteBuilderAssets{}
 		for assetRows.Next() {
@@ -1438,10 +1543,13 @@ func handlePublishSite(db *sql.DB) http.HandlerFunc {
 		now := time.Now()
 
 		// Create version as published
-		_, err = db.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_versions (id, site_id, version_number, pages_snapshot, theme_snapshot, assets_snapshot, settings_snapshot, status, published_at, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, 'published', ?, ?)
-		`, versionID, siteID, maxVersion+1, pagesSnapshot, themeConfig, assetsSnapshot, settings, now, now)
+		`, `
+			INSERT INTO site_builder_versions (id, site_id, version_number, pages_snapshot, theme_snapshot, assets_snapshot, settings_snapshot, status, published_at, created_at)
+			VALUES (?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), 'published', ?, ?)
+		`), versionID, siteID, maxVersion+1, pagesSnapshot, themeConfig, assetsSnapshot, settings, now, now)
 
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create version")
@@ -1449,9 +1557,11 @@ func handlePublishSite(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Update site with published version
-		_, err = db.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, nativeSQL(`
 			UPDATE site_builder_sites SET published_version_id = ?, status = 'published', updated_at = ? WHERE id = ?
-		`, versionID, now, siteID)
+		`, `
+			UPDATE site_builder_sites SET published_version_id = ?, status = 'published', updated_at = ? WHERE app.norm_ascii(id) = app.norm_ascii(?)
+		`), versionID, now, siteID)
 
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to update site")
@@ -1482,13 +1592,19 @@ func handleGetPublishStatus(db *sql.DB) http.HandlerFunc {
 
 		// Check for active publish jobs
 		var job SiteBuilderPublishQueue
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(ctx, nativeSQL(`
 			SELECT id, site_id, version_id, action, status, progress, total_steps, error_message, started_at, completed_at, created_at
 			FROM site_builder_publish_queue
 			WHERE site_id = ? AND status IN ('pending', 'processing')
 			ORDER BY created_at DESC
 			LIMIT 1
-		`, siteID).Scan(
+		`, `
+			SELECT id, site_id, version_id, CAST(action AS text), CAST(status AS text), progress, total_steps, error_message, started_at, completed_at, created_at
+			FROM site_builder_publish_queue
+			WHERE site_id = ? AND status IN ('pending', 'processing')
+			ORDER BY created_at DESC
+			LIMIT 1
+		`), siteID).Scan(
 			&job.ID, &job.SiteID, &job.VersionID, &job.Action, &job.Status,
 			&job.Progress, &job.TotalSteps, &job.ErrorMessage, &job.StartedAt,
 			&job.CompletedAt, &job.CreatedAt,
@@ -1528,12 +1644,17 @@ func handleListDomains(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		rows, err := db.QueryContext(ctx, `
+		rows, err := db.QueryContext(ctx, nativeSQL(`
 			SELECT id, site_id, domain, is_primary, verification_token, verification_method, status, ssl_status, error_message, verified_at, created_at, updated_at
 			FROM site_builder_domain_mappings
 			WHERE site_id = ?
 			ORDER BY is_primary DESC, created_at ASC
-		`, siteID)
+		`, `
+			SELECT id, site_id, domain, is_primary, verification_token, CAST(verification_method AS text), CAST(status AS text), CAST(ssl_status AS text), error_message, verified_at, created_at, updated_at
+			FROM site_builder_domain_mappings
+			WHERE site_id = ?
+			ORDER BY is_primary DESC, created_at ASC
+		`), siteID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to list domains")
 			return
@@ -1587,14 +1708,42 @@ func handleCreateDomain(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// domain_owner_isolation_v1: a mapping may not claim a domain whose
+		// restaurant_domains row belongs to another restaurant (same 409 as the
+		// mapping's own unique key). DNS proof is not implemented (source TODO).
+		var siteRestaurantID int
+		if err := db.QueryRowContext(ctx, nativeSQL(`SELECT restaurant_id FROM site_builder_sites WHERE id = ?`, `SELECT restaurant_id FROM site_builder_sites WHERE app.norm_ascii(id) = app.norm_ascii(?)`), siteID).Scan(&siteRestaurantID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create domain")
+			return
+		}
+		// padding_domain_identity_v1: the SAME normalized identity is checked and
+		// stored (was: normalized check, raw insert -> on PG a padded duplicate of
+		// another site's host passed uk_domain).
+		if d := normalizePremiumDomain(input.Domain); d == "" {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid domain")
+			return
+		} else {
+			input.Domain = d
+		}
+		if foreign, err := domainOwnedByOther(ctx, db, input.Domain, siteRestaurantID, false); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Failed to create domain")
+			return
+		} else if foreign {
+			httpx.WriteError(w, http.StatusConflict, "Domain already in use")
+			return
+		}
+
 		id := uuid.New().String()
 		verificationToken := uuid.New().String()
 		now := time.Now()
 
-		_, err := db.ExecContext(ctx, `
+		_, err := db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO site_builder_domain_mappings (id, site_id, domain, is_primary, verification_token, verification_method, status, ssl_status, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, 'dns', 'pending', 'none', ?, ?)
-		`, id, siteID, input.Domain, input.IsPrimary, verificationToken, now, now)
+		`, `
+			INSERT INTO site_builder_domain_mappings (id, site_id, domain, is_primary, verification_token, verification_method, status, ssl_status, created_at, updated_at)
+			VALUES (?, ?, ?, CAST(CAST(? AS boolean) AS integer), ?, 'dns', 'pending', 'none', ?, ?)
+		`), id, siteID, input.Domain, input.IsPrimary, verificationToken, now, now)
 
 		if err != nil {
 			if strings.Contains(err.Error(), "uk_domain") {
@@ -1624,7 +1773,7 @@ func handleDeleteDomain(db *sql.DB) http.HandlerFunc {
 		domainID := chi.URLParam(r, "domainId")
 
 		var siteID string
-		err := db.QueryRowContext(ctx, "SELECT site_id FROM site_builder_domain_mappings WHERE id = ?", domainID).Scan(&siteID)
+		err := db.QueryRowContext(ctx, nativeSQL("SELECT site_id FROM site_builder_domain_mappings WHERE id = ?", "SELECT site_id FROM site_builder_domain_mappings WHERE app.norm_ascii(id) = app.norm_ascii(?)"), domainID).Scan(&siteID)
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Domain not found")
 			return
@@ -1639,7 +1788,7 @@ func handleDeleteDomain(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.ExecContext(ctx, "DELETE FROM site_builder_domain_mappings WHERE id = ?", domainID)
+		_, err = db.ExecContext(ctx, nativeSQL("DELETE FROM site_builder_domain_mappings WHERE id = ?", "DELETE FROM site_builder_domain_mappings WHERE app.norm_ascii(id) = app.norm_ascii(?)"), domainID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to delete domain")
 			return
@@ -1657,11 +1806,15 @@ func handleVerifyDomain(db *sql.DB) http.HandlerFunc {
 		domainID := chi.URLParam(r, "domainId")
 
 		var d SiteBuilderDomainMappings
-		err := db.QueryRowContext(ctx, `
+		err := db.QueryRowContext(ctx, nativeSQL(`
 			SELECT id, site_id, domain, is_primary, verification_token, verification_method, status, ssl_status, error_message, verified_at, created_at, updated_at
 			FROM site_builder_domain_mappings
 			WHERE id = ?
-		`, domainID).Scan(
+		`, `
+			SELECT id, site_id, domain, is_primary, verification_token, CAST(verification_method AS text), CAST(status AS text), CAST(ssl_status AS text), error_message, verified_at, created_at, updated_at
+			FROM site_builder_domain_mappings
+			WHERE app.norm_ascii(id) = app.norm_ascii(?)
+		`), domainID).Scan(
 			&d.ID, &d.SiteID, &d.Domain, &d.IsPrimary, &d.VerificationToken,
 			&d.VerificationMethod, &d.Status, &d.SSLStatus, &d.ErrorMessage,
 			&d.VerifiedAt, &d.CreatedAt, &d.UpdatedAt,
@@ -1684,11 +1837,15 @@ func handleVerifyDomain(db *sql.DB) http.HandlerFunc {
 		// TODO: Implement actual DNS verification
 		// For now, just mark as verified
 		now := time.Now()
-		_, err = db.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, nativeSQL(`
 			UPDATE site_builder_domain_mappings
 			SET status = 'verified', verified_at = ?, updated_at = ?
 			WHERE id = ?
-		`, now, now, domainID)
+		`, `
+			UPDATE site_builder_domain_mappings
+			SET status = 'verified', verified_at = ?, updated_at = ?
+			WHERE app.norm_ascii(id) = app.norm_ascii(?)
+		`), now, now, domainID)
 
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Failed to verify domain")
@@ -1708,12 +1865,17 @@ func handleVerifyDomain(db *sql.DB) http.HandlerFunc {
 
 func getSiteByID(ctx context.Context, db *sql.DB, siteID string) (*SiteBuilderSites, error) {
 	var s SiteBuilderSites
-	err := db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, name, subdomain, custom_domain, theme_config, status, 
 			   published_version_id, settings, created_at, updated_at
 		FROM site_builder_sites
 		WHERE id = ?
-	`, siteID).Scan(
+	`, `
+		SELECT id, restaurant_id, name, subdomain, custom_domain, CAST(theme_config AS text), CAST(status AS text), 
+			   published_version_id, CAST(settings AS text), created_at, updated_at
+		FROM site_builder_sites
+		WHERE app.norm_ascii(id) = app.norm_ascii(?)
+	`), siteID).Scan(
 		&s.ID, &s.RestaurantID, &s.Name, &s.Subdomain, &s.CustomDomain,
 		&s.ThemeConfig, &s.Status, &s.PublishedVersionID, &s.Settings,
 		&s.CreatedAt, &s.UpdatedAt,
@@ -1734,7 +1896,7 @@ func canAccessSite(ctx context.Context, db *sql.DB, restaurantID int) bool {
 
 func canAccessSiteBySiteID(ctx context.Context, db *sql.DB, siteID string) bool {
 	var restaurantID int
-	err := db.QueryRowContext(ctx, "SELECT restaurant_id FROM site_builder_sites WHERE id = ?", siteID).Scan(&restaurantID)
+	err := db.QueryRowContext(ctx, nativeSQL("SELECT restaurant_id FROM site_builder_sites WHERE id = ?", "SELECT restaurant_id FROM site_builder_sites WHERE app.norm_ascii(id) = app.norm_ascii(?)"), siteID).Scan(&restaurantID)
 	if err != nil {
 		return false
 	}

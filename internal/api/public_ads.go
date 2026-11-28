@@ -54,7 +54,7 @@ func (s *Server) handlePublicAdsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 ORDER BY updated_at DESC, id DESC`, restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 ORDER BY updated_at DESC, id DESC`, `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 ORDER BY updated_at DESC NULLS LAST, id DESC`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ads")
 		return

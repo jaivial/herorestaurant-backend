@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"preactvillacarmen/internal/sqldb"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +23,11 @@ func (s *Server) botToolExecutorFor(restaurantID int, msg botWebhookMessage, ten
 // repeated send_contact calls collapse into a single vCard delivery.
 func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage, tenant botTenantConfig, state *botTurnState) botToolExecutor {
 	return func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		// Hard horizon / event-menu policy at the tool boundary
+		// (wa_bot_policy_tool_boundary_v1): checked before any other tool logic.
+		if blocked, out := s.botPolicyToolBoundary(ctx, restaurantID, msg, tenant, state, name, input); blocked {
+			return out, nil
+		}
 		// Same-day policy is enforced before any mutation tool runs.
 		if blocked, out := s.botSameDayOperation(ctx, restaurantID, msg, tenant, name, input); blocked {
 			if state != nil {
@@ -56,7 +63,7 @@ func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage,
 				state.contactPhone = phone
 				// The agent decided this topic needs a human: keep redirecting
 				// while the customer stays on it (wa_bot_sticky_handoff_v1).
-				_ = s.botConversation.SetHandoff(ctx, restaurantID, msg.Sender, truncate(msg.Text, 160), "agent_contact", false)
+				s.botOpenHandoff(ctx, restaurantID, msg.Sender, truncate(msg.Text, 160), "agent_contact", false)
 			}
 		}
 		return out, nil
@@ -116,6 +123,21 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		botCheckpoint("wa_bot_special_bookings_staff_only_v1", "restaurant_id=%d tool=%s denied", restaurantID, name)
 		return botJSON(map[string]any{"error": "esta consulta solo está disponible para el equipo del restaurante.", "terminal": true}), nil
 	}
+	// Coordination id: wa_bot_tool_input_coercion_v1 - every custom tool gets
+	// its model-built input normalized against its own declared schema before
+	// the typed decoders run (quoted numbers/booleans/arrays). One shared
+	// coercion, no per-tool lenient decoders.
+	if schema, known := botToolInputSchemas()[name]; known {
+		coerced, changed, cerr := botCoerceToolInput(schema, input)
+		if cerr != nil {
+			botCheckpoint("wa_bot_tool_input_coercion_v1", "restaurant_id=%d tool=%s error=%q", restaurantID, name, cerr.Error())
+			return botJSON(map[string]any{"error": cerr.Error()}), nil
+		}
+		if changed {
+			botCheckpoint("wa_bot_tool_input_coercion_v1", "restaurant_id=%d tool=%s coerced=true", restaurantID, name)
+			input = coerced
+		}
+	}
 	switch name {
 	case "send_message":
 		return s.botToolSendMessage(ctx, restaurantID, msg, input)
@@ -166,12 +188,18 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolStaffDomainRead(ctx, restaurantID, msg, input)
 	case "panel_change":
 		return s.botToolPanelChange(ctx, restaurantID, msg, input)
+	// Coordination id: render_document_v1 - privileged chats only (control tool gate above).
+	case "render_document":
+		return s.botToolRenderDocument(ctx, restaurantID, msg, input)
 	// Coordination id: campaign_tools_v1 - the campaign editor of /app/campanas.
 	case "manage_campaign":
 		return s.botToolManageCampaign(ctx, restaurantID, msg, input)
 	// Coordination id: ads_html_editor_v1 - the web ads editor of /app/anuncios.
 	case "manage_ad":
 		return s.botToolManageAd(ctx, restaurantID, msg, input)
+	// Coordination id: special_date_whatsapp_only_v1 - «Reservas solo por WhatsApp».
+	case "manage_special_date_whatsapp_only":
+		return s.botToolManageSpecialDateWhatsAppOnly(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_invoice_v1 - invoices of /app/facturas.
 	case "manage_invoice":
 		return s.botToolManageInvoice(ctx, restaurantID, msg, input)
@@ -216,6 +244,10 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolCreatePropose(ctx, restaurantID, msg, input)
 	case "special_booking_propose_create":
 		return s.botToolSpecialCreatePropose(ctx, restaurantID, msg, input)
+	// Coordination id: booking_confirmation_resend_v1 - re-send the customer
+	// confirmation of an existing booking (propose + OK).
+	case "booking_propose_resend_confirmation":
+		return s.botToolBookingResendPropose(ctx, restaurantID, msg, input)
 	case "config_propose_day":
 		return s.botToolConfigDayPropose(ctx, restaurantID, msg, input)
 	case "config_propose_daily_limit":
@@ -319,7 +351,15 @@ func (s *Server) botToolSendMessage(ctx context.Context, restaurantID int, msg b
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
 	}
-	return botJSON(map[string]any{"sent": true, "parts": len(parts)}), nil
+	out := map[string]any{"sent": true, "parts": len(parts)}
+	// wa_bot_outbound_split_v2: the split is sentence-aware, but the ideal is
+	// that the model itself writes several short send_message calls (one per
+	// idea); when the gate had to split, say so in the result so the next
+	// answer adapts.
+	if len(parts) > 1 {
+		out["hint"] = "el mensaje era largo y se envió dividido en " + strconv.Itoa(len(parts)) + " mensajes: para leerse mejor escribe mensajes más cortos (uno por idea, frases completas) y envíalos como send_message separados"
+	}
+	return botJSON(out), nil
 }
 
 func (s *Server) botToolSendButtons(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
@@ -379,7 +419,7 @@ func (s *Server) botToolSendMedia(ctx context.Context, restaurantID int, msg bot
 
 func (s *Server) botToolSendLocation(ctx context.Context, restaurantID int, msg botWebhookMessage) (string, error) {
 	var direccion sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT direccion FROM restaurant_info WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&direccion)
+	_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT direccion FROM restaurant_info WHERE restaurant_id = ? LIMIT 1`), restaurantID).Scan(&direccion)
 	address := strings.TrimSpace(direccion.String)
 	if address == "" {
 		return botJSON(map[string]any{"error": "el restaurante no tiene dirección configurada"}), nil
@@ -427,7 +467,7 @@ func (s *Server) botBrandName(ctx context.Context, restaurantID int) string {
 		return strings.TrimSpace(branding.BrandName)
 	}
 	var name sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT name FROM restaurants WHERE id = ? LIMIT 1`, restaurantID).Scan(&name)
+	_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT name FROM restaurants WHERE id = ? LIMIT 1`), restaurantID).Scan(&name)
 	if strings.TrimSpace(name.String) != "" {
 		return strings.TrimSpace(name.String)
 	}
@@ -438,10 +478,10 @@ func (s *Server) botBrandName(ctx context.Context, restaurantID int) string {
 
 func (s *Server) botToolRestaurantInfo(ctx context.Context, restaurantID int) (string, error) {
 	var direccion, telefono, email, website, menuURL sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT direccion, telefono, email, website, menu_url
 		FROM restaurant_info WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&direccion, &telefono, &email, &website, &menuURL)
+	`), restaurantID).Scan(&direccion, &telefono, &email, &website, &menuURL)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) && !isSQLSchemaError(err) {
 		return botJSON(map[string]any{"error": "error consultando información"}), nil
 	}
@@ -458,24 +498,38 @@ func (s *Server) botToolRestaurantInfo(ctx context.Context, restaurantID int) (s
 // --- availability tools ----------------------------------------------------
 
 func (s *Server) botDayCapacity(ctx context.Context, restaurantID int, dateISO string) (limit int, total int, err error) {
+	return s.botDayCapacityOn(ctx, s.db, restaurantID, dateISO)
+}
+
+// botDayCapacityOn reads the day limit and booked total on ex (the locked tx
+// for the authoritative recheck). The restaurant default limit is config read
+// through loadReservationDefaults (s.db), as in the source.
+func (s *Server) botDayCapacityOn(ctx context.Context, ex execQueryer, restaurantID int, dateISO string) (limit int, total int, err error) {
 	var limitRaw sql.NullInt64
-	if err = s.db.QueryRowContext(ctx,
-		"SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1",
+	if err = ex.QueryRowContext(ctx,
+		nativeSQL("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1",
+			`SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? ORDER BY id DESC LIMIT 1`),
 		restaurantID, dateISO).Scan(&limitRaw); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, err
 	}
 	if limitRaw.Valid {
 		limit = int(limitRaw.Int64)
 	} else {
-		// No per-day override: use the tenant's configured default, not a literal.
-		defaults, derr := s.loadReservationDefaults(ctx, restaurantID)
-		if derr != nil {
+		// No per-day override: the tenant default, read on ex (inside the
+		// locked tx for the recheck) with loadReservationDefaults' exact rule:
+		// a valid 0..500 value, else defaultDailyLimit; no row -> default.
+		limit = defaultDailyLimit
+		var d sql.NullInt64
+		derr := ex.QueryRowContext(ctx, portableSQL(`SELECT daily_limit FROM restaurant_reservation_defaults WHERE restaurant_id = ? LIMIT 1`), restaurantID).Scan(&d)
+		if derr != nil && !errors.Is(derr, sql.ErrNoRows) {
 			return 0, 0, derr
 		}
-		limit = defaults.DailyLimit
+		if derr == nil && d.Valid && d.Int64 >= 0 && d.Int64 <= 500 {
+			limit = int(d.Int64)
+		}
 	}
-	if err = s.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?",
+	if err = ex.QueryRowContext(ctx,
+		portableSQL("SELECT COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?"),
 		restaurantID, dateISO).Scan(&total); err != nil {
 		return 0, 0, err
 	}
@@ -520,10 +574,10 @@ func (s *Server) botResolveDaySchedule(ctx context.Context, restaurantID int, da
 	}
 
 	var hoursRaw, modeRaw sql.NullString
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT hoursarray, opening_mode FROM openinghours
 		WHERE restaurant_id = ? AND dateselected = ? LIMIT 1
-	`, restaurantID, dateISO).Scan(&hoursRaw, &modeRaw)
+	`), restaurantID, dateISO).Scan(&hoursRaw, &modeRaw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return botDaySchedule{}, err
 	}
@@ -693,7 +747,7 @@ type botBookingRow struct {
 
 func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone string) ([]botBookingRow, error) {
 	national, digits := botPhoneVariants(phone)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id,
 			DATE_FORMAT(reservation_date, '%Y-%m-%d'),
 			TIME_FORMAT(reservation_time, '%H:%i'),
@@ -712,7 +766,26 @@ func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone st
 			AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 		ORDER BY reservation_date ASC, reservation_time ASC
 		LIMIT 10
-	`, restaurantID, national, digits, digits)
+	`, `
+		SELECT id,
+			to_char(reservation_date, 'YYYY-MM-DD'),
+			to_char(reservation_time, 'HH24:MI'),
+			party_size, customer_name,
+			COALESCE(arroz_type, ''), COALESCE(arroz_servings, ''),
+			COALESCE("highChairs", 0), COALESCE("babyStrollers", 0),
+			COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id,
+			COALESCE(extras_json, ''),
+			COALESCE(commentary, ''), COALESCE(is_event, 0),
+			COALESCE(is_special_booking, 0), COALESCE(is_prereserva, 0),
+			COALESCE((SELECT sd.title FROM special_dates sd WHERE sd.restaurant_id = bookings.restaurant_id AND sd.date = bookings.reservation_date AND sd.is_active = 1 LIMIT 1), ''),
+			COALESCE(children, 0), COALESCE(has_mobility_issues, 0)
+		FROM bookings
+		WHERE restaurant_id = ?
+			AND reservation_date >= CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date)
+			AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+		ORDER BY reservation_date ASC, reservation_time ASC
+		LIMIT 10
+	`), restaurantID, national, digits, digits)
 	if err != nil {
 		return nil, err
 	}
@@ -876,19 +949,44 @@ func (s *Server) botToolCreateBooking(ctx context.Context, restaurantID int, msg
 
 	contactEmail := s.restaurantFallbackEmail(ctx, restaurantID)
 
-	res, err := s.db.ExecContext(ctx, `
+	// booking_day_lock_v1: the capacity check above is advisory; the
+	// authoritative recheck + insert run in ONE tx under the day lock.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error creando la reserva"}), nil
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockBookingDays(ctx, tx, restaurantID, dateISO); err != nil {
+		return botJSON(map[string]any{"error": "error creando la reserva"}), nil
+	}
+	if limit, total, err = s.botDayCapacityOn(ctx, tx, restaurantID, dateISO); err != nil {
+		return botJSON(map[string]any{"error": "error consultando capacidad"}), nil
+	}
+	if over, free := botOverCapacity(limit, total, 0, in.People); over {
+		return botJSON(map[string]any{"error": "no hay disponibilidad suficiente para esa fecha", "free_seats": free}), nil
+	}
+	// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps MySQL identical.
+	bookingID, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO bookings (
 			restaurant_id, reservation_date, party_size, children, reservation_time,
 			customer_name, contact_phone, contact_phone_country_code, commentary,
 			arroz_type, arroz_servings, babyStrollers, highChairs, contact_email
 		) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, dateISO, in.People, resTime, name, national, cc,
+	`, `
+		INSERT INTO bookings (
+			restaurant_id, reservation_date, party_size, children, reservation_time,
+			customer_name, contact_phone, contact_phone_country_code, commentary,
+			arroz_type, arroz_servings, "babyStrollers", "highChairs", contact_email
+		) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), "id", restaurantID, dateISO, in.People, resTime, name, national, cc,
 		strings.TrimSpace(in.Commentary), arrozTypeJSON, arrozServingsJSON,
 		clampBotInt(in.BabyStrollers, 0, 3), clampBotInt(in.HighChairs, 0, 3), contactEmail)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error creando la reserva"}), nil
 	}
-	bookingID, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return botJSON(map[string]any{"error": "error creando la reserva"}), nil
+	}
 
 	return botJSON(map[string]any{
 		"created":    true,
@@ -920,7 +1018,7 @@ func (s *Server) botToolCancelBooking(ctx context.Context, restaurantID int, pho
 	}
 
 	err = withTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO cancelled_bookings
 				(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
 				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
@@ -929,7 +1027,16 @@ func (s *Server) botToolCancelBooking(ctx context.Context, restaurantID int, pho
 				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
 				 COALESCE(babyStrollers,0), COALESCE(highChairs,0), NOW(), 'whatsapp'
 			FROM bookings WHERE id = ? AND restaurant_id = ?
-		`, in.BookingID, restaurantID)
+		`, `
+			INSERT INTO cancelled_bookings
+				(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
+				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
+				 "babyStrollers", "highChairs", cancellation_date, cancelled_by)
+			SELECT restaurant_id, id, reservation_date, party_size, CAST(reservation_time AS text), customer_name,
+				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
+				 COALESCE("babyStrollers",0), COALESCE("highChairs",0), date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), 'whatsapp'
+			FROM bookings WHERE id = ? AND restaurant_id = ?
+		`), in.BookingID, restaurantID)
 		if err != nil {
 			return err
 		}
@@ -937,15 +1044,28 @@ func (s *Server) botToolCancelBooking(ctx context.Context, restaurantID int, pho
 		var wDate sql.NullString
 		var wParty sql.NullInt64
 		var wFloor, wSalon sql.NullInt64
-		if qErr := tx.QueryRowContext(ctx, `
+		// The source ignores a failed read and continues the transaction: on
+		// PG it runs inside a savepoint scope so the tx is not aborted.
+		var qErr error
+		_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+			qErr = tx.QueryRowContext(ctx, nativeSQL(`
 			SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), party_size, preferred_floor_number, preferred_salon_id
 			FROM bookings WHERE id = ? AND restaurant_id = ?
-		`, in.BookingID, restaurantID).Scan(&wDate, &wParty, &wFloor, &wSalon); qErr == nil && wDate.Valid && wParty.Valid {
+		`, `
+			SELECT to_char(reservation_date, 'YYYY-MM-DD'), party_size, preferred_floor_number, preferred_salon_id
+			FROM bookings WHERE id = ? AND restaurant_id = ?
+		`), in.BookingID, restaurantID).Scan(&wDate, &wParty, &wFloor, &wSalon)
+			if errors.Is(qErr, sql.ErrNoRows) {
+				return nil // not a statement error: nothing to roll back
+			}
+			return qErr
+		})
+		if qErr == nil && wDate.Valid && wParty.Valid {
 			if occErr := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, wDate.String, wFloor, wSalon, int(wParty.Int64), -1); occErr != nil {
 				return occErr
 			}
 		}
-		res, err := tx.ExecContext(ctx, `DELETE FROM bookings WHERE id = ? AND restaurant_id = ?`, in.BookingID, restaurantID)
+		res, err := tx.ExecContext(ctx, portableSQL(`DELETE FROM bookings WHERE id = ? AND restaurant_id = ?`), in.BookingID, restaurantID)
 		if err != nil {
 			return err
 		}
@@ -1045,11 +1165,11 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		riceServingsStored = string(bs)
 	}
 	if in.HighChairs != nil {
-		sets = append(sets, "highChairs = ?")
+		sets = append(sets, sqlFragment("highChairs = ?", `"highChairs" = ?`))
 		args = append(args, clampBotInt(*in.HighChairs, 0, 3))
 	}
 	if in.BabyStrollers != nil {
-		sets = append(sets, "babyStrollers = ?")
+		sets = append(sets, sqlFragment("babyStrollers = ?", `"babyStrollers" = ?`))
 		args = append(args, clampBotInt(*in.BabyStrollers, 0, 3))
 	}
 	if len(sets) == 0 {
@@ -1063,7 +1183,9 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		var curDate string
 		var curParty int
 		if err := s.db.QueryRowContext(ctx,
-			"SELECT reservation_date, party_size FROM bookings WHERE id = ? AND restaurant_id = ?",
+			// SOURCE BEHAVIOUR kept: parseTime renders DATE as RFC3339 text;
+			// pgx date -> time.Time yields the same string.
+			portableSQL("SELECT reservation_date, party_size FROM bookings WHERE id = ? AND restaurant_id = ?"),
 			in.BookingID, restaurantID).Scan(&curDate, &curParty); err != nil {
 			return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
 		}
@@ -1102,13 +1224,19 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		party, strollers, highChairs                                   int
 	}
 	var riceType, riceServings sql.NullString
-	snapErr := s.db.QueryRowContext(ctx, `
+	snapErr := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'),
 		       TIME_FORMAT(reservation_time, '%H:%i:%s'),
 		       party_size, customer_name, contact_phone,
 		       arroz_type, arroz_servings, babyStrollers, highChairs
 		FROM bookings WHERE id = ? AND restaurant_id = ?
-	`, in.BookingID, restaurantID).Scan(
+	`, `
+		SELECT to_char(reservation_date, 'YYYY-MM-DD'),
+		       to_char(reservation_time, 'HH24:MI:SS'),
+		       party_size, customer_name, contact_phone,
+		       arroz_type, arroz_servings, "babyStrollers", "highChairs"
+		FROM bookings WHERE id = ? AND restaurant_id = ?
+	`), in.BookingID, restaurantID).Scan(
 		&snap.date, &snap.time, &snap.party, &snap.customerName, &snap.contactPhone,
 		&riceType, &riceServings, &snap.strollers, &snap.highChairs)
 	if snapErr != nil {
@@ -1118,7 +1246,52 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 	snap.riceServings = riceServings.String
 
 	query := fmt.Sprintf("UPDATE bookings SET %s WHERE id = ? AND restaurant_id = ?", strings.Join(sets, ", "))
-	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+	// booking_day_lock_v1: when date or party changes, the authoritative
+	// capacity recheck and the UPDATE run in ONE tx under the lock of both
+	// days (old and new, ascending). The booking's day is re-read under the
+	// lock; if it moved meanwhile the change is refused (no wrong-day lock).
+	mtx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error modificando la reserva"}), nil
+	}
+	defer func() { _ = mtx.Rollback() }()
+	if newDateISO != "" || newPeople > 0 {
+		effDate := snap.date
+		if newDateISO != "" {
+			effDate = newDateISO
+		}
+		effPeople := snap.party
+		if newPeople > 0 {
+			effPeople = newPeople
+		}
+		if err := lockBookingDays(ctx, mtx, restaurantID, snap.date, effDate); err != nil {
+			return botJSON(map[string]any{"error": "error modificando la reserva"}), nil
+		}
+		var lockedDate string
+		var lockedParty int
+		if err := mtx.QueryRowContext(ctx, nativeSQL(`SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), party_size FROM bookings WHERE id = ? AND restaurant_id = ?`, `SELECT to_char(reservation_date, 'YYYY-MM-DD'), party_size FROM bookings WHERE id = ? AND restaurant_id = ?`), in.BookingID, restaurantID).Scan(&lockedDate, &lockedParty); err != nil {
+			return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
+		}
+		if lockedDate != snap.date || lockedParty != snap.party {
+			return botJSON(map[string]any{"error": "la reserva cambió mientras se modificaba; vuelve a consultarla"}), nil
+		}
+		limit, total, err := s.botDayCapacityOn(ctx, mtx, restaurantID, effDate)
+		if err != nil {
+			return botJSON(map[string]any{"error": "error consultando capacidad"}), nil
+		}
+		existing := 0
+		if lockedDate == effDate {
+			existing = lockedParty
+		}
+		if over, free := botOverCapacity(limit, total, existing, effPeople); over {
+			return botJSON(map[string]any{"error": "no hay disponibilidad suficiente para esa fecha", "free_seats": free}), nil
+		}
+	}
+	// Fixed set items (camelCase quoted per dialect), rebound once.
+	if _, err := mtx.ExecContext(ctx, portableSQL(query), args...); err != nil {
+		return botJSON(map[string]any{"error": "error modificando la reserva"}), nil
+	}
+	if err := mtx.Commit(); err != nil {
 		return botJSON(map[string]any{"error": "error modificando la reserva"}), nil
 	}
 
@@ -1191,7 +1364,7 @@ func botOverCapacity(limit, total, existing, want int) (over bool, free int) {
 // national and E.164 formats inconsistently.
 func (s *Server) botMemberForPhone(ctx context.Context, restaurantID int, phone string) (int64, string, error) {
 	want := digitsOnly(phone)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, first_name, last_name, COALESCE(phone,''), COALESCE(whatsapp_number,'') FROM restaurant_members WHERE restaurant_id=? AND is_active=1`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id, first_name, last_name, COALESCE(phone,''), COALESCE(whatsapp_number,'') FROM restaurant_members WHERE restaurant_id=? AND is_active=1`), restaurantID)
 	if err != nil {
 		return 0, "", err
 	}
@@ -1284,7 +1457,7 @@ func (s *Server) botToolMemberSchedule(ctx context.Context, restaurantID int, ph
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, DATE_FORMAT(work_date,'%Y-%m-%d'), TIME_FORMAT(start_time,'%H:%i'), TIME_FORMAT(end_time,'%H:%i'), COALESCE(notes,'') FROM member_work_schedules WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`, restaurantID, id, from, to)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id, DATE_FORMAT(work_date,'%Y-%m-%d'), TIME_FORMAT(start_time,'%H:%i'), TIME_FORMAT(end_time,'%H:%i'), COALESCE(notes,'') FROM member_work_schedules WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`, `SELECT id, to_char(work_date,'YYYY-MM-DD'), to_char(start_time,'HH24:MI'), to_char(end_time,'HH24:MI'), COALESCE(notes,'') FROM member_work_schedules WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`), restaurantID, id, from, to)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando horario"}), nil
 	}
@@ -1313,7 +1486,7 @@ func (s *Server) botToolMemberAttendance(ctx context.Context, restaurantID int, 
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,DATE_FORMAT(work_date,'%Y-%m-%d'),COALESCE(TIME_FORMAT(start_time,'%H:%i'),''),COALESCE(TIME_FORMAT(end_time,'%H:%i'),''),minutes_worked,COALESCE(source,''),COALESCE(notes,'') FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`, restaurantID, id, from, to)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id,DATE_FORMAT(work_date,'%Y-%m-%d'),COALESCE(TIME_FORMAT(start_time,'%H:%i'),''),COALESCE(TIME_FORMAT(end_time,'%H:%i'),''),minutes_worked,COALESCE(source,''),COALESCE(notes,'') FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`, `SELECT id,to_char(work_date,'YYYY-MM-DD'),COALESCE(to_char(start_time,'HH24:MI'),''),COALESCE(to_char(end_time,'HH24:MI'),''),minutes_worked,COALESCE(source,''),COALESCE(notes,'') FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time NULLS FIRST,id LIMIT 100`), restaurantID, id, from, to)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando asistencia"}), nil
 	}
@@ -1344,7 +1517,7 @@ func (s *Server) botToolMemberAccess(ctx context.Context, restaurantID int, phon
 	var userID sql.NullInt64
 	var email sql.NullString
 	var must sql.NullBool
-	err = s.db.QueryRowContext(ctx, `SELECT m.bo_user_id,COALESCE(u.email,''),COALESCE(u.must_change_password,0) FROM restaurant_members m LEFT JOIN bo_users u ON u.id=m.bo_user_id WHERE m.restaurant_id=? AND m.id=?`, restaurantID, id).Scan(&userID, &email, &must)
+	err = s.db.QueryRowContext(ctx, portableSQL(`SELECT m.bo_user_id,COALESCE(u.email,''),COALESCE(u.must_change_password,0) FROM restaurant_members m LEFT JOIN bo_users u ON u.id=m.bo_user_id WHERE m.restaurant_id=? AND m.id=?`), restaurantID, id).Scan(&userID, &email, &must)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return botJSON(map[string]any{"error": "error consultando acceso"}), nil
 	}
@@ -1388,7 +1561,7 @@ func (s *Server) botHandleAttendanceCommand(ctx context.Context, restaurantID in
 		return true
 	}
 	var verified bool
-	if err := s.db.QueryRowContext(ctx, `SELECT whatsapp_verified_at IS NOT NULL FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`, restaurantID, id).Scan(&verified); err != nil || !verified {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT whatsapp_verified_at IS NOT NULL FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`), restaurantID, id).Scan(&verified); err != nil || !verified {
 		s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "Debes verificar tu número de WhatsApp antes de fichar.")
 		return true
 	}
@@ -1397,8 +1570,9 @@ func (s *Server) botHandleAttendanceCommand(ctx context.Context, restaurantID in
 	defer s.fichajeMu.Unlock()
 	var entryID int64
 	var workDate, start string
-	err = s.db.QueryRowContext(ctx, `SELECT id, DATE_FORMAT(work_date,'%Y-%m-%d'), TIME_FORMAT(start_time,'%H:%i')
-		FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1`, restaurantID, id).Scan(&entryID, &workDate, &start)
+	err = s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, DATE_FORMAT(work_date,'%Y-%m-%d'), TIME_FORMAT(start_time,'%H:%i')
+		FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1`, `SELECT id, to_char(work_date,'YYYY-MM-DD'), to_char(start_time,'HH24:MI')
+		FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1`), restaurantID, id).Scan(&entryID, &workDate, &start)
 	active := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No se ha podido consultar el fichaje.")
@@ -1412,7 +1586,7 @@ func (s *Server) botHandleAttendanceCommand(ctx context.Context, restaurantID in
 			return true
 		}
 		now := time.Now().In(boMadridTZ)
-		res, e := s.db.ExecContext(ctx, `INSERT INTO member_time_entries (restaurant_member_id,restaurant_id,work_date,start_time,end_time,minutes_worked,source) VALUES (?,?,?,?,NULL,0,'whatsapp')`, id, restaurantID, now.Format("2006-01-02"), now.Format("15:04:05"))
+		res, e := s.db.ExecContext(ctx, portableSQL(`INSERT INTO member_time_entries (restaurant_member_id,restaurant_id,work_date,start_time,end_time,minutes_worked,source) VALUES (?,?,?,?,NULL,0,'whatsapp')`), id, restaurantID, now.Format("2006-01-02"), now.Format("15:04:05"))
 		if e != nil {
 			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No se ha podido iniciar el fichaje.")
 		} else {
@@ -1425,7 +1599,7 @@ func (s *Server) botHandleAttendanceCommand(ctx context.Context, restaurantID in
 			return true
 		}
 		now := time.Now().In(boMadridTZ)
-		_, e := s.db.ExecContext(ctx, `UPDATE member_time_entries SET end_time=?, minutes_worked=GREATEST(0,TIMESTAMPDIFF(MINUTE,CONCAT(work_date,' ',start_time),?)), source='whatsapp' WHERE id=? AND restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL`, now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), entryID, restaurantID, id)
+		_, e := s.db.ExecContext(ctx, nativeSQL(`UPDATE member_time_entries SET end_time=?, minutes_worked=GREATEST(0,TIMESTAMPDIFF(MINUTE,CONCAT(work_date,' ',start_time),?)), source='whatsapp' WHERE id=? AND restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL`, `UPDATE member_time_entries SET end_time=?, minutes_worked=(SELECT CASE WHEN d IS NULL THEN NULL ELSE GREATEST(0, d) END FROM (SELECT CAST(trunc(EXTRACT(EPOCH FROM (CAST(? AS timestamp) - (work_date + start_time))) / 60) AS integer) AS d) mins), source='whatsapp' WHERE id=? AND restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL`), now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), entryID, restaurantID, id)
 		if e != nil {
 			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No se ha podido detener el fichaje.")
 		} else {

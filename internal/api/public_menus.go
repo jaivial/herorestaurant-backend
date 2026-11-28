@@ -69,14 +69,16 @@ func publicMenuDescription(description string, enabled bool) string {
 }
 
 type publicMenuSection struct {
-	ID                  int64            `json:"id"`
-	Title               string           `json:"title"`
-	DisplayTitle        string           `json:"display_title"`
-	Subtitle            string           `json:"subtitle"`
-	TabLabel            string           `json:"tab_label"`
-	Kind                string           `json:"kind"`
-	Position            int              `json:"position"`
-	Annotations         []string         `json:"annotations"`
+	ID           int64    `json:"id"`
+	Title        string   `json:"title"`
+	DisplayTitle string   `json:"display_title"`
+	Subtitle     string   `json:"subtitle"`
+	TabLabel     string   `json:"tab_label"`
+	Kind         string   `json:"kind"`
+	Position     int      `json:"position"`
+	Annotations  []string `json:"annotations"`
+	// Coordination id: menu_section_cta_v1 - only enabled buttons are exposed.
+	Cta                 *menuSectionCta  `json:"cta,omitempty"`
 	Dishes              []publicMenuDish `json:"dishes"`
 	TitleEnglish        string           `json:"title_english,omitempty"`
 	DisplayTitleEnglish string           `json:"display_title_english,omitempty"`
@@ -241,6 +243,11 @@ type pageVisibility struct {
 	CafesWebPlacement   string `json:"cafes_web_placement"`
 	VinosWebPlacement   string `json:"vinos_web_placement"`
 	BebidasWebPlacement string `json:"bebidas_web_placement"`
+	// Coordination id: foodtype_show_prices_v1
+	CafesShowPrices   bool `json:"cafes_show_prices"`
+	BebidasShowPrices bool `json:"bebidas_show_prices"`
+	PostresShowPrices bool `json:"postres_show_prices"`
+	VinosShowPrices   bool `json:"vinos_show_prices"`
 }
 
 // foodTypeVisibilityColumn binds one public food-type page to the columns that
@@ -254,32 +261,43 @@ type foodTypeVisibilityColumn struct {
 	placementKey    string
 	active          func(*pageVisibility) *bool
 	placement       func(*pageVisibility) *string
+	// Coordination id: foodtype_show_prices_v1 - column and JSON key share the name.
+	pricesColumn string
+	showPrices   func(*pageVisibility) *bool
 }
 
 var foodTypeVisibilityColumns = []foodTypeVisibilityColumn{
 	{
 		activeColumn: "cafe_page_active", placementColumn: "cafes_web_placement",
 		activeKey: "cafe_page_active", placementKey: "cafes_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.CafeActive },
-		placement: func(v *pageVisibility) *string { return &v.CafesWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.CafeActive },
+		pricesColumn: "cafes_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.CafesShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.CafesWebPlacement },
 	},
 	{
 		activeColumn: "bebidas_page_active", placementColumn: "bebidas_web_placement",
 		activeKey: "bebidas_page_active", placementKey: "bebidas_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.BebidasActive },
-		placement: func(v *pageVisibility) *string { return &v.BebidasWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.BebidasActive },
+		pricesColumn: "bebidas_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.BebidasShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.BebidasWebPlacement },
 	},
 	{
 		activeColumn: "postres_page_active", placementColumn: "postres_web_placement",
 		activeKey: "postres_page_active", placementKey: "postres_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.PostresActive },
-		placement: func(v *pageVisibility) *string { return &v.PostresWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.PostresActive },
+		pricesColumn: "postres_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.PostresShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.PostresWebPlacement },
 	},
 	{
 		activeColumn: "vinos_page_active", placementColumn: "vinos_web_placement",
 		activeKey: "vinos_page_active", placementKey: "vinos_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.VinosActive },
-		placement: func(v *pageVisibility) *string { return &v.VinosWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.VinosActive },
+		pricesColumn: "vinos_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.VinosShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.VinosWebPlacement },
 	},
 }
 
@@ -299,6 +317,7 @@ func defaultPageVisibility() pageVisibility {
 	for _, col := range foodTypeVisibilityColumns {
 		*col.active(&vis) = true
 		*col.placement(&vis) = "inside_menus"
+		*col.showPrices(&vis) = true
 	}
 	return vis
 }
@@ -310,23 +329,25 @@ func (v pageVisibility) payload() map[string]any {
 	for _, col := range foodTypeVisibilityColumns {
 		out[col.activeKey] = *col.active(&v)
 		out[col.placementKey] = *col.placement(&v)
+		out[col.pricesColumn] = *col.showPrices(&v)
 	}
 	return out
 }
 
 func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) pageVisibility {
 	vis := defaultPageVisibility()
-	columns := make([]string, 0, len(foodTypeVisibilityColumns)*2)
+	columns := make([]string, 0, len(foodTypeVisibilityColumns)*3)
 	actives := make([]int, len(foodTypeVisibilityColumns))
 	placements := make([]string, len(foodTypeVisibilityColumns))
-	targets := make([]any, 0, len(foodTypeVisibilityColumns)*2)
+	prices := make([]int, len(foodTypeVisibilityColumns))
+	targets := make([]any, 0, len(foodTypeVisibilityColumns)*3)
 	for i, col := range foodTypeVisibilityColumns {
-		columns = append(columns, col.activeColumn, col.placementColumn)
-		targets = append(targets, &actives[i], &placements[i])
+		columns = append(columns, col.activeColumn, col.placementColumn, col.pricesColumn)
+		targets = append(targets, &actives[i], &placements[i], &prices[i])
 	}
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT "+strings.Join(columns, ", ")+" FROM restaurant_page_visibility WHERE restaurant_id = ?",
+		portableSQL("SELECT "+strings.Join(columns, ", ")+" FROM restaurant_page_visibility WHERE restaurant_id = ?"),
 		restaurantID,
 	).Scan(targets...)
 	if err != nil {
@@ -336,6 +357,7 @@ func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) pageVi
 	for i, col := range foodTypeVisibilityColumns {
 		*col.active(&vis) = actives[i] != 0
 		*col.placement(&vis) = normalizedWebPlacement(placements[i])
+		*col.showPrices(&vis) = prices[i] != 0
 	}
 	return vis
 }
@@ -352,6 +374,10 @@ type pageVisibilityPatch struct {
 	CafesWebPlacement   *string `json:"cafes_web_placement,omitempty"`
 	VinosWebPlacement   *string `json:"vinos_web_placement,omitempty"`
 	BebidasWebPlacement *string `json:"bebidas_web_placement,omitempty"`
+	CafesShowPrices     *bool   `json:"cafes_show_prices,omitempty"`
+	BebidasShowPrices   *bool   `json:"bebidas_show_prices,omitempty"`
+	PostresShowPrices   *bool   `json:"postres_show_prices,omitempty"`
+	VinosShowPrices     *bool   `json:"vinos_show_prices,omitempty"`
 }
 
 // fields pairs every patch value with the column it writes, in the same order as
@@ -366,10 +392,10 @@ func (p pageVisibilityPatch) fields() []any {
 		return &normalized
 	}
 	return []any{
-		p.CafeActive, placement(p.CafesWebPlacement),
-		p.BebidasActive, placement(p.BebidasWebPlacement),
-		p.PostresActive, placement(p.PostresWebPlacement),
-		p.VinosActive, placement(p.VinosWebPlacement),
+		p.CafeActive, placement(p.CafesWebPlacement), p.CafesShowPrices,
+		p.BebidasActive, placement(p.BebidasWebPlacement), p.BebidasShowPrices,
+		p.PostresActive, placement(p.PostresWebPlacement), p.PostresShowPrices,
+		p.VinosActive, placement(p.VinosWebPlacement), p.VinosShowPrices,
 	}
 }
 
@@ -399,11 +425,14 @@ func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, pat
 	inserts := make([]string, 0, len(values))
 	updates := make([]string, 0, len(values))
 	for _, col := range foodTypeVisibilityColumns {
-		columns = append(columns, col.activeColumn, col.placementColumn)
-		inserts = append(inserts, "COALESCE(?, 1)", "COALESCE(?, 'inside_menus')")
+		columns = append(columns, col.activeColumn, col.placementColumn, col.pricesColumn)
+		inserts = append(inserts, "COALESCE(?, 1)", "COALESCE(?, 'inside_menus')", "COALESCE(?, 1)")
+		// PG: the existing-row value must be table-qualified inside DO UPDATE.
+		cur := sqlFragment("", "restaurant_page_visibility.")
 		updates = append(updates,
-			col.activeColumn+" = COALESCE(?, "+col.activeColumn+")",
-			col.placementColumn+" = COALESCE(?, "+col.placementColumn+")",
+			col.activeColumn+" = COALESCE(?, "+cur+col.activeColumn+")",
+			col.placementColumn+" = COALESCE(?, "+cur+col.placementColumn+")",
+			col.pricesColumn+" = COALESCE(?, "+cur+col.pricesColumn+")",
 		)
 	}
 
@@ -412,10 +441,12 @@ func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, pat
 	args = append(args, values...)
 	args = append(args, values...)
 
+	// Composed from the fixed foodTypeVisibilityColumns list; ON CONFLICT on
+	// uniq_rest_page_vis_restaurant (restaurant_id); rebound once.
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO restaurant_page_visibility (restaurant_id, "+strings.Join(columns, ", ")+") "+
+		portableSQL("INSERT INTO restaurant_page_visibility (restaurant_id, "+strings.Join(columns, ", ")+") "+
 			"VALUES (?, "+strings.Join(inserts, ", ")+") "+
-			"ON DUPLICATE KEY UPDATE "+strings.Join(updates, ", "),
+			sqlFragment("ON DUPLICATE KEY UPDATE ", "ON CONFLICT (restaurant_id) DO UPDATE SET ")+strings.Join(updates, ", ")),
 		args...,
 	)
 	return err
@@ -464,6 +495,7 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 
 	vis := s.getPageVisibility(r.Context(), restaurantID)
 	logCheckpoint(r, "page_visibility_updated",
+		"cafes_show_prices", strconv.FormatBool(vis.CafesShowPrices),
 		"cafes_web_placement", vis.CafesWebPlacement,
 		"vinos_web_placement", vis.VinosWebPlacement,
 		"bebidas_web_placement", vis.BebidasWebPlacement,
@@ -500,7 +532,7 @@ func (s *Server) publicMenuMediaURL(ctx context.Context, restaurantID int, raw s
 func (s *Server) loadPublicSliderImages(ctx context.Context, restaurantID int, menuID int64) (string, []string) {
 	mode := "default"
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(slider_mode, 'default') FROM menus WHERE id = ? AND restaurant_id = ?`,
+		nativeSQL(`SELECT COALESCE(slider_mode, 'default') FROM menus WHERE id = ? AND restaurant_id = ?`, `SELECT COALESCE(CAST(slider_mode AS text), 'default') FROM menus WHERE id = ? AND restaurant_id = ?`),
 		menuID, restaurantID).Scan(&mode); err != nil {
 		mode = "default"
 	}
@@ -517,7 +549,7 @@ func (s *Server) loadPublicSliderImages(ctx context.Context, restaurantID int, m
 	}
 	query += ` ORDER BY position ASC, id ASC`
 
-	rows, err := s.db.QueryContext(ctx, query, restaurantID, menuID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), restaurantID, menuID)
 	if err != nil {
 		return mode, []string{}
 	}
@@ -541,12 +573,12 @@ func (s *Server) loadPublicSliderImages(ctx context.Context, restaurantID int, m
 // (the public template decides whether to render them).
 // Coordination id: special_menu_sections_v1
 func (s *Server) loadPublicSpecialMenuSections(ctx context.Context, restaurantID int, menuID int64) []publicMenuSpecialSection {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, title, COALESCE(image_path, ''), position, price
 		FROM special_menu_sections
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
-	`, restaurantID, menuID)
+	`), restaurantID, menuID)
 	if err != nil {
 		return []publicMenuSpecialSection{}
 	}
@@ -577,12 +609,17 @@ func (s *Server) loadPublicSpecialMenuSections(ctx context.Context, restaurantID
 func (s *Server) loadMenuSpecialDate(ctx context.Context, restaurantID int, menuID int64) *publicMenuSpecialDate {
 	var d publicMenuSpecialDate
 	var active, prereserva int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT sd.id, DATE_FORMAT(sd.date, '%Y-%m-%d'), COALESCE(sd.title, ''), sd.is_active, sd.prereserva_enabled
 		FROM menus m
 		JOIN special_dates sd ON sd.id = m.special_date_id AND sd.restaurant_id = m.restaurant_id
 		WHERE m.id = ? AND m.restaurant_id = ?
-	`, menuID, restaurantID).Scan(&d.ID, &d.Date, &d.Title, &active, &prereserva)
+	`, `
+		SELECT sd.id, to_char(sd.date, 'YYYY-MM-DD'), COALESCE(sd.title, ''), sd.is_active, sd.prereserva_enabled
+		FROM menus m
+		JOIN special_dates sd ON sd.id = m.special_date_id AND sd.restaurant_id = m.restaurant_id
+		WHERE m.id = ? AND m.restaurant_id = ?
+	`), menuID, restaurantID).Scan(&d.ID, &d.Date, &d.Title, &active, &prereserva)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[special_menu_price_date_v1] load special date menu=%d err=%v", menuID, err)
@@ -679,7 +716,7 @@ func (s *Server) loadPublicMenuWeekdays(ctx context.Context, restaurantID int, m
 		FROM menu_weekday_availability
 		WHERE restaurant_id = ? AND menu_id IN (%s)
 	`, placeholderList(len(menuIDs)))
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(q), args...)
 	if err != nil {
 		return out
 	}
@@ -731,7 +768,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		       special_menu_image_url, legacy_source_table, created_at, modified_at, COALESCE(completo, 0)`
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT `+selectFields+`
 		FROM menus
 		WHERE restaurant_id = ?
@@ -749,7 +786,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		  END ASC,
 		  modified_at DESC,
 		  id DESC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -1000,14 +1037,14 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sectionsQuery := fmt.Sprintf(`
-			SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
+			SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, ''), `+sqlFragment("cta_json", "CAST(cta_json AS text)")+`
 			FROM group_menu_sections_v2
 			WHERE restaurant_id = ?
 			  AND menu_id IN (%s)
 			ORDER BY menu_id ASC, position ASC, id ASC
 		`, placeholderList(len(menuIDs)))
 
-		sectionRows, err := s.db.QueryContext(r.Context(), sectionsQuery, sectionArgs...)
+		sectionRows, err := s.db.QueryContext(r.Context(), portableSQL(sectionsQuery), sectionArgs...)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1026,8 +1063,9 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				sectionKind    string
 				position       int
 				annotationsRaw sql.NullString
+				ctaRaw         sql.NullString
 			)
-			if err := sectionRows.Scan(&sectionID, &menuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw); err != nil {
+			if err := sectionRows.Scan(&sectionID, &menuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw, &ctaRaw); err != nil {
 				sectionRows.Close()
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 					"success": false,
@@ -1048,6 +1086,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				TabLabel:     tabLabel,
 				Kind:         normalizeV2SectionKind(sectionKind),
 				Position:     position,
+				Cta:          publicMenuSectionCta(ctaRaw),
 				Annotations:  normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
 				Dishes:       []publicMenuDish{},
 			}
@@ -1071,7 +1110,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dishesQuery := fmt.Sprintf(`
-			SELECT id, menu_id, section_id, title_snapshot, COALESCE(description_snapshot, ''), COALESCE(description_enabled, 1), allergens_json, foto_path,
+			SELECT id, menu_id, section_id, title_snapshot, COALESCE(description_snapshot, ''), COALESCE(description_enabled, 1), `+sqlFragment("allergens_json", "CAST(allergens_json AS text)")+`, foto_path,
 			       supplement_enabled, supplement_price, price, position
 			FROM group_menu_section_dishes_v2
 			WHERE restaurant_id = ?
@@ -1080,7 +1119,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			ORDER BY menu_id ASC, section_id ASC, position ASC, id ASC
 		`, placeholderList(len(menuIDs)))
 
-		dishRows, err := s.db.QueryContext(r.Context(), dishesQuery, dishArgs...)
+		dishRows, err := s.db.QueryContext(r.Context(), portableSQL(dishesQuery), dishArgs...)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1234,11 +1273,11 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 	// First, get the menu type to determine response format
 	var menuType sql.NullInt64
 	logCheckpoint(r, "public_menu_by_id_db_query_started", "menu_id", menuIDParam)
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COALESCE(menu_type, 1)
 		FROM menus
 		WHERE id = ? AND restaurant_id = ? AND active = 1 AND is_draft = 0
-	`, menuID, restaurantID).Scan(&menuType)
+	`), menuID, restaurantID).Scan(&menuType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
@@ -1268,13 +1307,13 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 			createdAtRaw       sql.NullString
 			modifiedAtRaw      sql.NullString
 		)
-		err = s.db.QueryRowContext(r.Context(), `
+		err = s.db.QueryRowContext(r.Context(), portableSQL(`
 			SELECT menu_title, menu_subtitle, comments, special_menu_image_url,
 			       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
 			       COALESCE(completo, 0), created_at, modified_at
 			FROM menus
 			WHERE id = ? AND restaurant_id = ?
-		`, menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL, &webPlacementRaw, &menuPublicActiveIn, &completoInt, &createdAtRaw, &modifiedAtRaw)
+		`), menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL, &webPlacementRaw, &menuPublicActiveIn, &completoInt, &createdAtRaw, &modifiedAtRaw)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1347,7 +1386,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		completoInt         int
 	)
 
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
 		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
@@ -1356,7 +1395,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		       COALESCE(completo, 0)
 		FROM menus
 		WHERE id = ? AND restaurant_id = ?
-	`, menuID, restaurantID).Scan(
+	`), menuID, restaurantID).Scan(
 		&menuID,
 		&menuTitle,
 		&priceRaw,
@@ -1493,12 +1532,17 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	sectionByID := make(map[int64]*publicMenuSection, 64)
 	sectionsByMenu := make(map[int64][]*publicMenuSection, 1)
 
-	sectionRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
+	sectionRows, err := s.db.QueryContext(r.Context(), nativeSQL(`
+		SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, ''), cta_json
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
-	`, restaurantID, menuID)
+	`, `
+		SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, ''), CAST(cta_json AS text)
+		FROM group_menu_sections_v2
+		WHERE restaurant_id = ? AND menu_id = ?
+		ORDER BY position ASC, id ASC
+	`), restaurantID, menuID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -1517,8 +1561,9 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			sectionKind    string
 			position       int
 			annotationsRaw sql.NullString
+			ctaRaw         sql.NullString
 		)
-		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw); err != nil {
+		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw, &ctaRaw); err != nil {
 			sectionRows.Close()
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1537,6 +1582,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			TabLabel:     tabLabel,
 			Kind:         normalizeV2SectionKind(sectionKind),
 			Position:     position,
+			Cta:          publicMenuSectionCta(ctaRaw),
 			Annotations:  normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
 			Dishes:       []publicMenuDish{},
 		}
@@ -1545,13 +1591,19 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	}
 	sectionRows.Close()
 
-	dishRows, err := s.db.QueryContext(r.Context(), `
+	dishRows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT id, menu_id, section_id, title_snapshot, COALESCE(description_snapshot, ''), COALESCE(description_enabled, 1), allergens_json, foto_path,
 		       supplement_enabled, supplement_price, price, position
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ? AND active = 1
 		ORDER BY section_id ASC, position ASC, id ASC
-	`, restaurantID, menuID)
+	`, `
+		SELECT id, menu_id, section_id, title_snapshot, COALESCE(description_snapshot, ''), COALESCE(description_enabled, 1), CAST(allergens_json AS text), foto_path,
+		       supplement_enabled, supplement_price, price, position
+		FROM group_menu_section_dishes_v2
+		WHERE restaurant_id = ? AND menu_id = ? AND active = 1
+		ORDER BY section_id ASC, position ASC, id ASC
+	`), restaurantID, menuID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -1742,13 +1794,13 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 	}
 
 	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, menu_title, COALESCE(menu_type, 1), COALESCE(legacy_source_table, ''),
 		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
 		       COALESCE(completo, 0)
 		FROM menus
 		WHERE `+activePublicMenuWhere()+`
-		ORDER BY `+activePublicMenuOrderBy(),
+		ORDER BY `+activePublicMenuOrderBy()),
 		restaurantID,
 	)
 	if err != nil {
@@ -1843,7 +1895,7 @@ type publicSidebarSection struct {
 // belong to an active, publicly visible menu.
 func (s *Server) loadPublicVisibleSections(r *http.Request, restaurantID int) ([]publicSidebarSection, error) {
 	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT sec.id, sec.menu_id, sec.title, sec.section_kind,
 		       COALESCE(sec.web_placement, 'inside_menus'), m.menu_title
 		FROM group_menu_sections_v2 sec
@@ -1851,7 +1903,7 @@ func (s *Server) loadPublicVisibleSections(r *http.Request, restaurantID int) ([
 		WHERE sec.restaurant_id = ? AND COALESCE(sec.public_page_active, 0) = 1
 		  AND `+activePublicMenuWhereAliased("m")+`
 		ORDER BY sec.position ASC, sec.id ASC
-	`, restaurantID, restaurantID)
+	`), restaurantID, restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1889,12 +1941,12 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 
 	logCheckpoint(r, "home_menus_db_query_started", "restaurant_id", strconv.Itoa(restaurantID))
 	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, menu_title, menu_type, active, menu_subtitle,
 		       show_menu_preview_image, menu_preview_image_path, COALESCE(completo, 0)
 		FROM menus
 		WHERE `+activePublicMenuWhere()+`
-		ORDER BY `+activePublicMenuOrderBy(),
+		ORDER BY `+activePublicMenuOrderBy()),
 		restaurantID,
 	)
 	if err != nil {

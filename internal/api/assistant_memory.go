@@ -104,24 +104,30 @@ func (s *Server) extractAssistantMemories(ctx context.Context, restaurantID, use
 		if !ok1 || !ok2 || rel == "" || from == to {
 			continue
 		}
-		_, _ = s.db.ExecContext(ctx,
+		// Only collidable unique key besides the identity PK: uq_edge(from_node,to_node,rel).
+		_, _ = s.db.ExecContext(ctx, nativeSQL(
 			`INSERT INTO assistant_memory_edges (restaurant_id, from_node, to_node, rel) VALUES (?, ?, ?, ?)
 			 ON DUPLICATE KEY UPDATE weight = weight + 1`,
+			`INSERT INTO assistant_memory_edges (restaurant_id, from_node, to_node, rel) VALUES (?, ?, ?, ?)
+			 ON CONFLICT (from_node, to_node, app.norm(rel)) DO UPDATE SET weight = assistant_memory_edges.weight + 1`),
 			restaurantID, from, to, rel)
 	}
 }
 
 func (s *Server) upsertMemoryNode(ctx context.Context, restaurantID, userID int, kind, label, detail string) (int64, error) {
-	if _, err := s.db.ExecContext(ctx,
+	// Only collidable unique key besides the identity PK: uq_memory_scope_label.
+	if _, err := s.db.ExecContext(ctx, nativeSQL(
 		`INSERT INTO assistant_memory_nodes (restaurant_id, user_id, kind, label, detail)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE detail = VALUES(detail), kind = VALUES(kind), weight = weight + 0.25`,
+		`INSERT INTO assistant_memory_nodes (restaurant_id, user_id, kind, label, detail)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (restaurant_id, user_id, app.norm(label)) DO UPDATE SET detail = EXCLUDED.detail, kind = EXCLUDED.kind, weight = assistant_memory_nodes.weight + 0.25`),
 		restaurantID, userID, kind, label, detail); err != nil {
 		return 0, err
 	}
 	var id int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM assistant_memory_nodes WHERE restaurant_id = ? AND user_id = ? AND label = ?`,
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT id FROM assistant_memory_nodes WHERE restaurant_id = ? AND user_id = ? AND label = ?`, `SELECT id FROM assistant_memory_nodes WHERE restaurant_id = ? AND user_id = ? AND app.norm(label) = app.norm(?)`),
 		restaurantID, userID, label).Scan(&id)
 	return id, err
 }
@@ -133,14 +139,23 @@ func (s *Server) loadAssistantMemories(ctx context.Context, restaurantID, userID
 	if s.db == nil || restaurantID <= 0 || limit <= 0 {
 		return nil
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	// GROUP BY n.id: PK functional dependency (valid on PG). MySQL DESC sorts
+	// NULL updated_at last -> explicit NULLS LAST.
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT n.id, n.kind, n.label, COALESCE(n.detail, ''), n.weight
 		FROM assistant_memory_nodes n
 		LEFT JOIN assistant_memory_edges e ON e.from_node = n.id AND e.restaurant_id = n.restaurant_id
 		WHERE n.restaurant_id = ? AND (n.user_id = ? OR n.user_id = 0)
 		GROUP BY n.id
 		ORDER BY (n.weight + COALESCE(SUM(e.weight), 0) * 0.5) DESC, n.updated_at DESC
-		LIMIT ?`, restaurantID, userID, limit)
+		LIMIT ?`, `
+		SELECT n.id, n.kind, n.label, COALESCE(n.detail, ''), n.weight
+		FROM assistant_memory_nodes n
+		LEFT JOIN assistant_memory_edges e ON e.from_node = n.id AND e.restaurant_id = n.restaurant_id
+		WHERE n.restaurant_id = ? AND (n.user_id = ? OR n.user_id = 0)
+		GROUP BY n.id
+		ORDER BY (n.weight + COALESCE(SUM(e.weight), 0) * 0.5) DESC, n.updated_at DESC NULLS LAST
+		LIMIT ?`), restaurantID, userID, limit)
 	if err != nil {
 		return nil
 	}

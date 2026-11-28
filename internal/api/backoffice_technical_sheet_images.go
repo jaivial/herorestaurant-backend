@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Step images follow the established pipeline: the client compresses to WebP,
@@ -37,10 +38,13 @@ func (s *Server) completeStepImageJob(ctx context.Context, restaurantID int, job
 
 	// Claiming the job and publishing the image happen together, so a late
 	// result cannot slip past a cancellation.
-	res, err := tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, nativeSQL(`
 		UPDATE stock_recipe_step_image_jobs
 		   SET status='SUCCEEDED', result_object_path=?, finished_at=NOW()
-		 WHERE restaurant_id=? AND id=? AND status IN ('PENDING','RUNNING')`,
+		 WHERE restaurant_id=? AND id=? AND status IN ('PENDING','RUNNING')`, `
+		UPDATE stock_recipe_step_image_jobs
+		   SET status='SUCCEEDED', result_object_path=?, finished_at=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		 WHERE restaurant_id=? AND id=? AND status IN ('PENDING','RUNNING')`),
 		objectPath, restaurantID, jobID)
 	if err != nil {
 		return false, err
@@ -49,10 +53,10 @@ func (s *Server) completeStepImageJob(ctx context.Context, restaurantID int, job
 		return false, nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, portableSQL(`
 		UPDATE stock_recipe_steps
 		   SET image_url=?, image_object_path=?, generation_status='READY', generation_error=NULL
-		 WHERE restaurant_id=? AND id=?`,
+		 WHERE restaurant_id=? AND id=?`),
 		imageURL, objectPath, restaurantID, stepID); err != nil {
 		return false, err
 	}
@@ -76,16 +80,19 @@ func (s *Server) failStepImageJob(ctx context.Context, restaurantID int, jobID, 
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		UPDATE stock_recipe_step_image_jobs
 		   SET status='FAILED', error_message=?, finished_at=NOW()
-		 WHERE restaurant_id=? AND id=? AND status IN ('PENDING','RUNNING')`,
+		 WHERE restaurant_id=? AND id=? AND status IN ('PENDING','RUNNING')`, `
+		UPDATE stock_recipe_step_image_jobs
+		   SET status='FAILED', error_message=?, finished_at=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		 WHERE restaurant_id=? AND id=? AND status IN ('PENDING','RUNNING')`),
 		truncateForColumn(reason, 500), restaurantID, jobID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, portableSQL(`
 		UPDATE stock_recipe_steps SET generation_status='FAILED', generation_error=?
-		 WHERE restaurant_id=? AND id=?`,
+		 WHERE restaurant_id=? AND id=?`),
 		truncateForColumn(reason, 500), restaurantID, stepID); err != nil {
 		return err
 	}
@@ -122,8 +129,8 @@ func truncateForColumn(value string, max int) string {
 // image, which AI_ENHANCE needs as its input.
 func (s *Server) stepBelongsToSheet(ctx context.Context, restaurantID int, sheetID, stepID int64) (imageURL string, err error) {
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(image_url,'') FROM stock_recipe_steps
-		  WHERE restaurant_id=? AND id=? AND recipe_id=?`,
+		portableSQL(`SELECT COALESCE(image_url,'') FROM stock_recipe_steps
+		  WHERE restaurant_id=? AND id=? AND recipe_id=?`),
 		restaurantID, stepID, sheetID).Scan(&imageURL)
 	return imageURL, err
 }
@@ -177,8 +184,9 @@ func (s *Server) handleBOTechnicalSheetStepImageJobCreate(w http.ResponseWriter,
 	if idempotencyKey != "" {
 		var existingID int64
 		err := s.db.QueryRowContext(r.Context(),
-			`SELECT id FROM stock_recipe_step_image_jobs
-			  WHERE restaurant_id=? AND idempotency_key=?`,
+			nativeSQL(`SELECT id FROM stock_recipe_step_image_jobs
+			  WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id FROM stock_recipe_step_image_jobs
+			  WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`),
 			a.ActiveRestaurantID, idempotencyKey).Scan(&existingID)
 		if err == nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -201,23 +209,21 @@ func (s *Server) handleBOTechnicalSheetStepImageJobCreate(w http.ResponseWriter,
 	}
 	defer tx.Rollback()
 
-	res, err := tx.ExecContext(r.Context(), `
+	jobID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 		INSERT INTO stock_recipe_step_image_jobs
 			(restaurant_id,step_id,mode,status,prompt,idempotency_key,actor_user_id)
-		VALUES (?,?,?,'PENDING',?,?,?)`,
-		a.ActiveRestaurantID, stepID, mode, prompt, idempotencyKey, a.User.ID)
+		VALUES (?,?,?,'PENDING',?,?,?)`), "id", a.ActiveRestaurantID, stepID, mode, prompt, idempotencyKey, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "No se pudo crear el trabajo de imagen")
 		return
 	}
-	jobID, _ := res.LastInsertId()
 
 	// The step carries the status too, so the editor can show progress without
 	// having to know about the job table.
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		UPDATE stock_recipe_steps
 		   SET generation_status='PENDING', generation_mode=?, generation_error=NULL
-		 WHERE restaurant_id=? AND id=?`,
+		 WHERE restaurant_id=? AND id=?`),
 		mode, a.ActiveRestaurantID, stepID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando el paso")
 		return
@@ -238,10 +244,10 @@ func (s *Server) handleBOTechnicalSheetStepImageJobGet(w http.ResponseWriter, r 
 	a, _ := boAuthFromContext(r.Context())
 	stepID, _ := strconv.ParseInt(chi.URLParam(r, "stepId"), 10, 64)
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, mode, status, COALESCE(error_message,''), COALESCE(result_object_path,''), created_at
 		  FROM stock_recipe_step_image_jobs
-		 WHERE restaurant_id=? AND step_id=? ORDER BY id DESC LIMIT 10`,
+		 WHERE restaurant_id=? AND step_id=? ORDER BY id DESC LIMIT 10`),
 		a.ActiveRestaurantID, stepID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando trabajos")

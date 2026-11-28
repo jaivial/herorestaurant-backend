@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boFichajeMemberRef struct {
@@ -103,12 +104,17 @@ func (s *Server) memberScheduleTimesOnDate(ctx context.Context, restaurantID, me
 	StartTime string
 	EndTime   string
 }, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, TIME_FORMAT(start_time, '%H:%i'), TIME_FORMAT(end_time, '%H:%i')
 		FROM member_work_schedules
 		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date = ?
 		ORDER BY start_time
-	`, restaurantID, memberID, dateISO)
+	`, `
+		SELECT id, to_char(start_time, 'HH24:MI'), to_char(end_time, 'HH24:MI')
+		FROM member_work_schedules
+		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date = ?
+		ORDER BY start_time
+	`), restaurantID, memberID, dateISO)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +310,7 @@ func (s *Server) runBOFichajeAutoCutLoop() {
 
 func (s *Server) autoCutOpenEntries(ctx context.Context) error {
 	now := time.Now().In(boMadridTZ)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT
 			e.id,
 			e.restaurant_id,
@@ -323,7 +329,26 @@ func (s *Server) autoCutOpenEntries(ctx context.Context) error {
 			AND m.restaurant_id = e.restaurant_id
 		WHERE e.end_time IS NULL
 		ORDER BY e.id ASC
-	`)
+	`, `
+		SELECT
+			e.id,
+			e.restaurant_id,
+			e.restaurant_member_id,
+			to_char(e.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(e.start_time, 'HH24:MI') AS start_time,
+			to_char(s.end_time, 'HH24:MI') AS schedule_end,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name
+		FROM member_time_entries e
+		LEFT JOIN member_work_schedules s
+			ON s.restaurant_id = e.restaurant_id
+			AND s.restaurant_member_id = e.restaurant_member_id
+			AND s.work_date = e.work_date
+		LEFT JOIN restaurant_members m
+			ON m.id = e.restaurant_member_id
+			AND m.restaurant_id = e.restaurant_id
+		WHERE e.end_time IS NULL
+		ORDER BY e.id ASC
+	`))
 	if err != nil {
 		return err
 	}
@@ -357,14 +382,27 @@ func (s *Server) autoCutOpenEntries(ctx context.Context) error {
 
 		cutoffDateTime := cutoffAt.Format("2006-01-02 15:04:05")
 		cutoffClock := cutoffAt.Format("15:04:05")
-		res, err := s.db.ExecContext(ctx, `
+		// Time model (sqldb_native_pg_v1): work_date/start_time and the "?"
+		// datetime are naive Madrid WALL-CLOCK values built in Go; MySQL
+		// TIMESTAMPDIFF on them and PG naive timestamp subtraction both ignore
+		// DST shifts (same wall-clock minutes). trunc() = TIMESTAMPDIFF's
+		// toward-zero truncation; the CASE keeps MySQL GREATEST(0, NULL) = NULL
+		// (PG GREATEST would ignore the NULL and give 0).
+		res, err := s.db.ExecContext(ctx, nativeSQL(`
 			UPDATE member_time_entries
 			SET
 				end_time = ?,
 				minutes_worked = GREATEST(0, TIMESTAMPDIFF(MINUTE, CONCAT(work_date, ' ', start_time), ?)),
 				source = 'clock_autocut'
 			WHERE id = ? AND restaurant_id = ? AND end_time IS NULL
-		`, cutoffClock, cutoffDateTime, entryID, restaurantID)
+		`, `
+			UPDATE member_time_entries
+			SET
+				end_time = ?,
+				minutes_worked = (SELECT CASE WHEN d IS NULL THEN NULL ELSE GREATEST(0, d) END FROM (SELECT CAST(trunc(EXTRACT(EPOCH FROM (CAST(? AS timestamp) - (work_date + start_time))) / 60) AS integer) AS d) mins),
+				source = 'clock_autocut'
+			WHERE id = ? AND restaurant_id = ? AND end_time IS NULL
+		`), cutoffClock, cutoffDateTime, entryID, restaurantID)
 		if err != nil {
 			return err
 		}
@@ -479,16 +517,15 @@ func (s *Server) handleBOFichajeStart(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().In(boMadridTZ)
 		dateISO := now.Format("2006-01-02")
 		startClock := now.Format("15:04:05")
-		res, err := s.db.ExecContext(r.Context(), `
+		entryID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 			INSERT INTO member_time_entries
 				(restaurant_member_id, restaurant_id, work_date, start_time, end_time, minutes_worked, source)
 			VALUES (?, ?, ?, ?, NULL, 0, 'clock')
-		`, member.ID, a.ActiveRestaurantID, dateISO, startClock)
+		`), "id", member.ID, a.ActiveRestaurantID, dateISO, startClock)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error iniciando fichaje")
 			return
 		}
-		entryID, _ := res.LastInsertId()
 		active = &boFichajeActiveEntry{
 			ID:         entryID,
 			MemberID:   member.ID,
@@ -553,14 +590,21 @@ func (s *Server) handleBOFichajeStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().In(boMadridTZ)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE member_time_entries
 		SET
 			end_time = ?,
 			minutes_worked = GREATEST(0, TIMESTAMPDIFF(MINUTE, CONCAT(work_date, ' ', start_time), ?)),
 			source = 'clock'
 		WHERE id = ? AND restaurant_id = ?
-	`, now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), active.ID, a.ActiveRestaurantID); err != nil {
+	`, `
+		UPDATE member_time_entries
+		SET
+			end_time = ?,
+			minutes_worked = (SELECT CASE WHEN d IS NULL THEN NULL ELSE GREATEST(0, d) END FROM (SELECT CAST(trunc(EXTRACT(EPOCH FROM (CAST(? AS timestamp) - (work_date + start_time))) / 60) AS integer) AS d) mins),
+			source = 'clock'
+		WHERE id = ? AND restaurant_id = ?
+	`), now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), active.ID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cerrando fichaje")
 		return
 	}
@@ -632,16 +676,15 @@ func (s *Server) handleBOFichajeAdminStart(w http.ResponseWriter, r *http.Reques
 		now := time.Now().In(boMadridTZ)
 		dateISO := now.Format("2006-01-02")
 		startClock := now.Format("15:04:05")
-		res, err := s.db.ExecContext(r.Context(), `
+		entryID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 			INSERT INTO member_time_entries
 				(restaurant_member_id, restaurant_id, work_date, start_time, end_time, minutes_worked, source)
 			VALUES (?, ?, ?, ?, NULL, 0, 'clock')
-		`, member.ID, a.ActiveRestaurantID, dateISO, startClock)
+		`), "id", member.ID, a.ActiveRestaurantID, dateISO, startClock)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error iniciando fichaje")
 			return
 		}
-		entryID, _ := res.LastInsertId()
 		active = &boFichajeActiveEntry{
 			ID:         entryID,
 			MemberID:   member.ID,
@@ -710,14 +753,21 @@ func (s *Server) handleBOFichajeAdminStop(w http.ResponseWriter, r *http.Request
 	}
 
 	now := time.Now().In(boMadridTZ)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE member_time_entries
 		SET
 			end_time = ?,
 			minutes_worked = GREATEST(0, TIMESTAMPDIFF(MINUTE, CONCAT(work_date, ' ', start_time), ?)),
 			source = 'clock'
 		WHERE id = ? AND restaurant_id = ? AND end_time IS NULL
-	`, now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), active.ID, a.ActiveRestaurantID); err != nil {
+	`, `
+		UPDATE member_time_entries
+		SET
+			end_time = ?,
+			minutes_worked = (SELECT CASE WHEN d IS NULL THEN NULL ELSE GREATEST(0, d) END FROM (SELECT CAST(trunc(EXTRACT(EPOCH FROM (CAST(? AS timestamp) - (work_date + start_time))) / 60) AS integer) AS d) mins),
+			source = 'clock'
+		WHERE id = ? AND restaurant_id = ? AND end_time IS NULL
+	`), now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), active.ID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cerrando fichaje")
 		return
 	}
@@ -875,7 +925,7 @@ func (s *Server) handleBOFichajeEntryPatch(w http.ResponseWriter, r *http.Reques
 	if nextEnd != nil {
 		endArg = *nextEnd + ":00"
 	}
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE member_time_entries
 		SET
 			start_time = ?,
@@ -885,7 +935,17 @@ func (s *Server) handleBOFichajeEntryPatch(w http.ResponseWriter, r *http.Reques
 				ELSE GREATEST(0, TIMESTAMPDIFF(MINUTE, CONCAT(work_date, ' ', ?), CONCAT(work_date, ' ', ?)))
 			END
 		WHERE id = ? AND restaurant_id = ?
-	`, nextStart+":00", endArg, endArg, nextStart+":00", endArg, entryID, a.ActiveRestaurantID); err != nil {
+	`, `
+		UPDATE member_time_entries
+		SET
+			start_time = ?,
+			end_time = ?,
+			minutes_worked = CASE
+				WHEN CAST(? AS text) IS NULL THEN 0
+				ELSE GREATEST(0, CAST(trunc(-EXTRACT(EPOCH FROM ((work_date + CAST(? AS time)) - (work_date + CAST(? AS time))))) / 60 AS integer))
+			END
+		WHERE id = ? AND restaurant_id = ?
+	`), nextStart+":00", endArg, endArg, nextStart+":00", endArg, entryID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando registro")
 		return
 	}
@@ -1018,7 +1078,7 @@ func (s *Server) handleBOHorariosMemberRange(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			s.id,
 			s.restaurant_member_id,
@@ -1031,7 +1091,20 @@ func (s *Server) handleBOHorariosMemberRange(w http.ResponseWriter, r *http.Requ
 		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
 		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date BETWEEN ? AND ?
 		ORDER BY s.work_date ASC
-	`, a.ActiveRestaurantID, memberID, fromStr, toStr)
+	`, `
+		SELECT
+			s.id,
+			s.restaurant_member_id,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name,
+			to_char(s.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(s.start_time, 'HH24:MI') AS start_time,
+			to_char(s.end_time, 'HH24:MI') AS end_time,
+			to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date BETWEEN ? AND ?
+		ORDER BY s.work_date ASC
+	`), a.ActiveRestaurantID, memberID, fromStr, toStr)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando horarios")
 		return
@@ -1091,13 +1164,19 @@ func (s *Server) handleBOHorariosMonth(w http.ResponseWriter, r *http.Request) {
 	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
 	end := start.AddDate(0, 1, -1)
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT DATE_FORMAT(work_date, '%Y-%m-%d') AS d, COUNT(*) AS c
 		FROM member_work_schedules
 		WHERE restaurant_id = ? AND work_date BETWEEN ? AND ?
 		GROUP BY work_date
 		ORDER BY work_date ASC
-	`, a.ActiveRestaurantID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	`, `
+		SELECT to_char(work_date, 'YYYY-MM-DD') AS d, COUNT(*) AS c
+		FROM member_work_schedules
+		WHERE restaurant_id = ? AND work_date BETWEEN ? AND ?
+		GROUP BY work_date
+		ORDER BY work_date ASC
+	`), a.ActiveRestaurantID, start.Format("2006-01-02"), end.Format("2006-01-02"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo calendario de horarios")
 		return
@@ -1156,7 +1235,7 @@ func (s *Server) handleBOHorariosCalendar(w http.ResponseWriter, r *http.Request
 	// Get total active members for the restaurant
 	var totalMembers int
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id = ? AND is_active = 1`,
+		portableSQL(`SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id = ? AND is_active = 1`),
 		a.ActiveRestaurantID,
 	).Scan(&totalMembers)
 	if err != nil {
@@ -1164,7 +1243,7 @@ func (s *Server) handleBOHorariosCalendar(w http.ResponseWriter, r *http.Request
 	}
 
 	// Query schedules with member details for the entire month
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT DATE_FORMAT(mws.work_date, '%Y-%m-%d') AS work_date, rm.id, rm.first_name, rm.last_name, rm.photo_url,
 		       TIME_FORMAT(mws.start_time, '%H:%i') AS start_time,
 	       TIME_FORMAT(mws.end_time, '%H:%i') AS end_time
@@ -1172,7 +1251,15 @@ func (s *Server) handleBOHorariosCalendar(w http.ResponseWriter, r *http.Request
 		JOIN restaurant_members rm ON rm.id = mws.restaurant_member_id AND rm.restaurant_id = mws.restaurant_id
 		WHERE mws.restaurant_id = ? AND mws.work_date BETWEEN ? AND ?
 		ORDER BY mws.work_date ASC, rm.first_name ASC, rm.last_name ASC, mws.start_time ASC
-	`, a.ActiveRestaurantID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	`, `
+		SELECT to_char(mws.work_date, 'YYYY-MM-DD') AS work_date, rm.id, rm.first_name, rm.last_name, rm.photo_url,
+		       to_char(mws.start_time, 'HH24:MI') AS start_time,
+	       to_char(mws.end_time, 'HH24:MI') AS end_time
+		FROM member_work_schedules mws
+		JOIN restaurant_members rm ON rm.id = mws.restaurant_member_id AND rm.restaurant_id = mws.restaurant_id
+		WHERE mws.restaurant_id = ? AND mws.work_date BETWEEN ? AND ?
+		ORDER BY mws.work_date ASC, rm.first_name COLLATE "es-x-icu" ASC, rm.last_name COLLATE "es-x-icu" ASC, mws.start_time ASC
+	`), a.ActiveRestaurantID, start.Format("2006-01-02"), end.Format("2006-01-02"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo calendario de horarios")
 		return
@@ -1312,12 +1399,12 @@ func (s *Server) handleBOHorariosAssign(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var firstName, lastName string
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT first_name, last_name
 		FROM restaurant_members
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
 		LIMIT 1
-	`, req.MemberID, a.ActiveRestaurantID).Scan(&firstName, &lastName)
+	`), req.MemberID, a.ActiveRestaurantID).Scan(&firstName, &lastName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Miembro no encontrado"})
@@ -1344,16 +1431,15 @@ func (s *Server) handleBOHorariosAssign(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	scheduleID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO member_work_schedules
 			(restaurant_member_id, restaurant_id, work_date, start_time, end_time)
 		VALUES (?, ?, ?, ?, ?)
-	`, req.MemberID, a.ActiveRestaurantID, date.Format("2006-01-02"), startHHMM+":00", endHHMM+":00")
+	`), "id", req.MemberID, a.ActiveRestaurantID, date.Format("2006-01-02"), startHHMM+":00", endHHMM+":00")
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando horario")
 		return
 	}
-	scheduleID, _ := res.LastInsertId()
 
 	schedule, err := s.getBOHorarioByID(r.Context(), a.ActiveRestaurantID, scheduleID)
 	if err != nil {
@@ -1464,11 +1550,15 @@ func (s *Server) handleBOHorariosUpdate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE member_work_schedules
 		SET start_time = ?, end_time = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND restaurant_id = ?
-	`, startHHMM+":00", endHHMM+":00", scheduleID, a.ActiveRestaurantID)
+	`, `
+		UPDATE member_work_schedules
+		SET start_time = ?, end_time = ?, updated_at = date_trunc('second', statement_timestamp())
+		WHERE id = ? AND restaurant_id = ?
+	`), startHHMM+":00", endHHMM+":00", scheduleID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando horario")
 		return
@@ -1519,10 +1609,10 @@ func (s *Server) handleBOHorariosDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM member_work_schedules
 		WHERE id = ? AND restaurant_id = ?
-	`, scheduleID, a.ActiveRestaurantID)
+	`), scheduleID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando horario")
 		return
@@ -1584,7 +1674,7 @@ func (s *Server) handleBOHorariosMySchedule(w http.ResponseWriter, r *http.Reque
 		to = from.AddDate(0, 1, -1)
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			s.id,
 			s.restaurant_member_id,
@@ -1597,7 +1687,20 @@ func (s *Server) handleBOHorariosMySchedule(w http.ResponseWriter, r *http.Reque
 		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
 		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date BETWEEN ? AND ?
 		ORDER BY s.work_date ASC
-	`, a.ActiveRestaurantID, memberID, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	`, `
+		SELECT
+			s.id,
+			s.restaurant_member_id,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name,
+			to_char(s.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(s.start_time, 'HH24:MI') AS start_time,
+			to_char(s.end_time, 'HH24:MI') AS end_time,
+			to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date BETWEEN ? AND ?
+		ORDER BY s.work_date ASC
+	`), a.ActiveRestaurantID, memberID, from.Format("2006-01-02"), to.Format("2006-01-02"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando horarios")
 		return
@@ -1804,7 +1907,7 @@ func (s *Server) getBOClockMemberForUser(ctx context.Context, restaurantID, user
 		dni          sql.NullString
 		passwordHash string
 	)
-	err := s.db.QueryRowContext(ctx, q, args...).Scan(&member.ID, &member.FirstName, &member.LastName, &dni, &passwordHash)
+	err := s.db.QueryRowContext(ctx, portableSQL(q), args...).Scan(&member.ID, &member.FirstName, &member.LastName, &dni, &passwordHash)
 	if err != nil {
 		return boClockMember{}, err
 	}
@@ -1827,7 +1930,7 @@ func (s *Server) getBOActiveEntry(ctx context.Context, restaurantID, memberID in
 		workDate  string
 		startTime string
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			id,
 			DATE_FORMAT(work_date, '%Y-%m-%d') AS work_date,
@@ -1836,7 +1939,16 @@ func (s *Server) getBOActiveEntry(ctx context.Context, restaurantID, memberID in
 		WHERE restaurant_id = ? AND restaurant_member_id = ? AND end_time IS NULL
 		ORDER BY work_date DESC, id DESC
 		LIMIT 1
-	`, restaurantID, memberID).Scan(&entryID, &workDate, &startTime)
+	`, `
+		SELECT
+			id,
+			to_char(work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(start_time, 'HH24:MI') AS start_time
+		FROM member_time_entries
+		WHERE restaurant_id = ? AND restaurant_member_id = ? AND end_time IS NULL
+		ORDER BY work_date DESC, id DESC
+		LIMIT 1
+	`), restaurantID, memberID).Scan(&entryID, &workDate, &startTime)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -1860,7 +1972,7 @@ func (s *Server) getBOActiveEntry(ctx context.Context, restaurantID, memberID in
 }
 
 func (s *Server) listBOActiveEntries(ctx context.Context, restaurantID int) ([]boFichajeActiveEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT
 			e.id,
 			e.restaurant_member_id,
@@ -1871,7 +1983,18 @@ func (s *Server) listBOActiveEntries(ctx context.Context, restaurantID int) ([]b
 		JOIN restaurant_members m ON m.id = e.restaurant_member_id AND m.restaurant_id = e.restaurant_id
 		WHERE e.restaurant_id = ? AND e.end_time IS NULL AND m.is_active = 1
 		ORDER BY e.work_date ASC, e.start_time ASC, e.id ASC
-	`, restaurantID)
+	`, `
+		SELECT
+			e.id,
+			e.restaurant_member_id,
+			to_char(e.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(e.start_time, 'HH24:MI') AS start_time,
+			TRIM(CONCAT(m.first_name, ' ', m.last_name)) AS member_name
+		FROM member_time_entries e
+		JOIN restaurant_members m ON m.id = e.restaurant_member_id AND m.restaurant_id = e.restaurant_id
+		WHERE e.restaurant_id = ? AND e.end_time IS NULL AND m.is_active = 1
+		ORDER BY e.work_date ASC, e.start_time ASC NULLS FIRST, e.id ASC
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1905,12 +2028,12 @@ func (s *Server) getBOClockMemberByID(ctx context.Context, restaurantID, memberI
 		member boClockMember
 		dni    sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT id, first_name, last_name, dni
 		FROM restaurant_members
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
 		LIMIT 1
-	`, memberID, restaurantID).Scan(&member.ID, &member.FirstName, &member.LastName, &dni)
+	`), memberID, restaurantID).Scan(&member.ID, &member.FirstName, &member.LastName, &dni)
 	if err != nil {
 		return boClockMember{}, err
 	}
@@ -1923,7 +2046,7 @@ func (s *Server) getBOClockMemberByID(ctx context.Context, restaurantID, memberI
 }
 
 func (s *Server) listBOTimeEntriesByMemberAndDate(ctx context.Context, restaurantID, memberID int, dateISO string) ([]boFichajeTimeEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT
 			e.id,
 			e.restaurant_member_id,
@@ -1937,7 +2060,21 @@ func (s *Server) listBOTimeEntriesByMemberAndDate(ctx context.Context, restauran
 		LEFT JOIN restaurant_members m ON m.id = e.restaurant_member_id AND m.restaurant_id = e.restaurant_id
 		WHERE e.restaurant_id = ? AND e.restaurant_member_id = ? AND e.work_date = ?
 		ORDER BY e.start_time ASC, e.id ASC
-	`, restaurantID, memberID, dateISO)
+	`, `
+		SELECT
+			e.id,
+			e.restaurant_member_id,
+			to_char(e.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(e.start_time, 'HH24:MI') AS start_time,
+			to_char(e.end_time, 'HH24:MI') AS end_time,
+			COALESCE(e.minutes_worked, 0) AS minutes_worked,
+			COALESCE(e.source, 'clock') AS source,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name
+		FROM member_time_entries e
+		LEFT JOIN restaurant_members m ON m.id = e.restaurant_member_id AND m.restaurant_id = e.restaurant_id
+		WHERE e.restaurant_id = ? AND e.restaurant_member_id = ? AND e.work_date = ?
+		ORDER BY e.start_time ASC NULLS FIRST, e.id ASC
+	`), restaurantID, memberID, dateISO)
 	if err != nil {
 		return nil, err
 	}
@@ -1972,7 +2109,7 @@ func (s *Server) getBOTimeEntryByID(ctx context.Context, restaurantID int, entry
 		endTime   sql.NullString
 		memberRaw string
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			e.id,
 			e.restaurant_member_id,
@@ -1986,7 +2123,21 @@ func (s *Server) getBOTimeEntryByID(ctx context.Context, restaurantID int, entry
 		LEFT JOIN restaurant_members m ON m.id = e.restaurant_member_id AND m.restaurant_id = e.restaurant_id
 		WHERE e.id = ? AND e.restaurant_id = ?
 		LIMIT 1
-	`, entryID, restaurantID).Scan(&item.ID, &item.MemberID, &item.WorkDate, &item.StartTime, &endTime, &item.MinutesWorked, &item.Source, &memberRaw)
+	`, `
+		SELECT
+			e.id,
+			e.restaurant_member_id,
+			to_char(e.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(e.start_time, 'HH24:MI') AS start_time,
+			to_char(e.end_time, 'HH24:MI') AS end_time,
+			COALESCE(e.minutes_worked, 0) AS minutes_worked,
+			COALESCE(e.source, 'clock') AS source,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name
+		FROM member_time_entries e
+		LEFT JOIN restaurant_members m ON m.id = e.restaurant_member_id AND m.restaurant_id = e.restaurant_id
+		WHERE e.id = ? AND e.restaurant_id = ?
+		LIMIT 1
+	`), entryID, restaurantID).Scan(&item.ID, &item.MemberID, &item.WorkDate, &item.StartTime, &endTime, &item.MinutesWorked, &item.Source, &memberRaw)
 	if err != nil {
 		return boFichajeTimeEntry{}, err
 	}
@@ -2002,7 +2153,7 @@ func (s *Server) getBOTimeEntryByID(ctx context.Context, restaurantID int, entry
 }
 
 func (s *Server) queryBOHorariosByDate(ctx context.Context, restaurantID int, date time.Time) ([]boFichajeSchedule, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT
 			s.id,
 			s.restaurant_member_id,
@@ -2016,7 +2167,21 @@ func (s *Server) queryBOHorariosByDate(ctx context.Context, restaurantID int, da
 		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
 		WHERE s.restaurant_id = ? AND s.work_date = ? AND m.is_active = 1
 		ORDER BY m.last_name ASC, m.first_name ASC, m.id ASC
-	`, restaurantID, date.Format("2006-01-02"))
+	`, `
+		SELECT
+			s.id,
+			s.restaurant_member_id,
+			m.first_name,
+			m.last_name,
+			to_char(s.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(s.start_time, 'HH24:MI') AS start_time,
+			to_char(s.end_time, 'HH24:MI') AS end_time,
+			to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.work_date = ? AND m.is_active = 1
+		ORDER BY m.last_name COLLATE "es-x-icu" ASC, m.first_name COLLATE "es-x-icu" ASC, m.id ASC
+	`), restaurantID, date.Format("2006-01-02"))
 	if err != nil {
 		return nil, err
 	}
@@ -2045,7 +2210,7 @@ func (s *Server) getBOHorarioByID(ctx context.Context, restaurantID int, schedul
 		it                  boFichajeSchedule
 		firstName, lastName string
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			s.id,
 			s.restaurant_member_id,
@@ -2059,7 +2224,21 @@ func (s *Server) getBOHorarioByID(ctx context.Context, restaurantID int, schedul
 		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
 		WHERE s.restaurant_id = ? AND s.id = ?
 		LIMIT 1
-	`, restaurantID, scheduleID).Scan(&it.ID, &it.MemberID, &firstName, &lastName, &it.Date, &it.StartTime, &it.EndTime, &it.UpdatedAt)
+	`, `
+		SELECT
+			s.id,
+			s.restaurant_member_id,
+			m.first_name,
+			m.last_name,
+			to_char(s.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(s.start_time, 'HH24:MI') AS start_time,
+			to_char(s.end_time, 'HH24:MI') AS end_time,
+			to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.id = ?
+		LIMIT 1
+	`), restaurantID, scheduleID).Scan(&it.ID, &it.MemberID, &firstName, &lastName, &it.Date, &it.StartTime, &it.EndTime, &it.UpdatedAt)
 	if err != nil {
 		return boFichajeSchedule{}, err
 	}
@@ -2076,7 +2255,7 @@ func (s *Server) getBOHorarioByMemberAndDate(ctx context.Context, restaurantID, 
 		name    string
 		updated sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			s.id,
 			DATE_FORMAT(s.work_date, '%Y-%m-%d') AS work_date,
@@ -2088,7 +2267,19 @@ func (s *Server) getBOHorarioByMemberAndDate(ctx context.Context, restaurantID, 
 		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
 		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date = ?
 		LIMIT 1
-	`, restaurantID, memberID, dateISO).Scan(&it.ID, &it.Date, &it.StartTime, &it.EndTime, &updated, &name)
+	`, `
+		SELECT
+			s.id,
+			to_char(s.work_date, 'YYYY-MM-DD') AS work_date,
+			to_char(s.start_time, 'HH24:MI') AS start_time,
+			to_char(s.end_time, 'HH24:MI') AS end_time,
+			to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at,
+			TRIM(CONCAT(m.first_name, ' ', m.last_name)) AS member_name
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date = ?
+		LIMIT 1
+	`), restaurantID, memberID, dateISO).Scan(&it.ID, &it.Date, &it.StartTime, &it.EndTime, &updated, &name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -2165,7 +2356,7 @@ func (s *Server) handleWSAdScheduleCheck(a boAuth, reqID string, adID int64, pay
 	if err1 != nil || err2 != nil || end.Before(start) {
 		return
 	}
-	rows, err := s.db.QueryContext(context.Background(), `SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND id <> ? AND starts_at IS NOT NULL AND ends_at IS NOT NULL AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at LIMIT 1`, a.ActiveRestaurantID, adID, *candidate.EndsAt, *candidate.StartsAt)
+	rows, err := s.db.QueryContext(context.Background(), portableSQL(`SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND id <> ? AND starts_at IS NOT NULL AND ends_at IS NOT NULL AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at LIMIT 1`), a.ActiveRestaurantID, adID, *candidate.EndsAt, *candidate.StartsAt)
 	if err != nil {
 		return
 	}

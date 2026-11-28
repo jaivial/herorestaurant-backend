@@ -417,9 +417,9 @@ func (s *Server) botSpecialBookingIsOwned(ctx context.Context, restaurantID int,
 	}
 	// Only special bookings are manageable through these tools.
 	var isSpecial int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(is_special_booking, 0) FROM bookings WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, bookingID).Scan(&isSpecial); err != nil {
+	`), restaurantID, bookingID).Scan(&isSpecial); err != nil {
 		return false, err
 	}
 	return isSpecial != 0, nil
@@ -520,9 +520,11 @@ func (s *Server) botToolGetSpecialDateMenu(ctx context.Context, restaurantID int
 		out = append(out, entry)
 	}
 	payload := map[string]any{
-		"date":                     date,
-		"title":                    settings.Title,
-		"prereserva_enabled":       settings.PrereservaEnabled,
+		"date":               date,
+		"title":              settings.Title,
+		"prereserva_enabled": settings.PrereservaEnabled,
+		// Coordination id: special_date_whatsapp_only_v1
+		"whatsapp_only":            settings.WhatsAppOnly,
 		"requires_adelanto":        settings.RequiresAdelanto,
 		"adelanto_payment_methods": accepted,
 		"menus":                    out,

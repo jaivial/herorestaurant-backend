@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"preactvillacarmen/internal/sqldb"
 )
 
 const (
@@ -372,14 +374,10 @@ func (s *Service) Refresh(ctx context.Context, tenantID int, dateRange DateRange
 	if tenantID <= 0 || dateRange.From.IsZero() || dateRange.To.IsZero() || dateRange.From.After(dateRange.To) {
 		return result, errors.New("invalid analytics refresh range")
 	}
-	runResult, err := s.db.ExecContext(ctx, `
+	runID, err := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`
 		INSERT INTO analytics_sync_runs (restaurant_id,from_date,to_date,status)
 		VALUES (?,?,?,'RUNNING')
-	`, tenantID, dateRange.From, dateRange.To)
-	if err != nil {
-		return result, err
-	}
-	runID, err := runResult.LastInsertId()
+	`), "id", tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return result, err
 	}
@@ -400,21 +398,21 @@ func (s *Service) Refresh(ctx context.Context, tenantID int, dateRange DateRange
 		}
 	}()
 
-	if _, err = tx.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, portableSQL(`
 		DELETE FROM analytics_sales_documents
 		WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?
-	`, tenantID, dateRange.From, dateRange.To); err != nil {
+	`), tenantID, dateRange.From, dateRange.To); err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM analytics_stock_facts WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`, tenantID, dateRange.From, dateRange.To); err != nil {
+	if _, err = tx.ExecContext(ctx, portableSQL(`DELETE FROM analytics_stock_facts WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`), tenantID, dateRange.From, dateRange.To); err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM analytics_daily_rollups WHERE restaurant_id=? AND rollup_date BETWEEN ? AND ?`, tenantID, dateRange.From, dateRange.To); err != nil {
+	if _, err = tx.ExecContext(ctx, portableSQL(`DELETE FROM analytics_daily_rollups WHERE restaurant_id=? AND rollup_date BETWEEN ? AND ?`), tenantID, dateRange.From, dateRange.To); err != nil {
 		return result, err
 	}
 	// Customer source rows are a rebuild aid, not an aggregate input. Replacing
 	// them prevents a changed source identity from leaving stale aliases behind.
-	if _, err = tx.ExecContext(ctx, `DELETE FROM analytics_customer_sources WHERE restaurant_id=?`, tenantID); err != nil {
+	if _, err = tx.ExecContext(ctx, portableSQL(`DELETE FROM analytics_customer_sources WHERE restaurant_id=?`), tenantID); err != nil {
 		return result, err
 	}
 
@@ -440,7 +438,7 @@ func (s *Service) Refresh(ctx context.Context, tenantID int, dateRange DateRange
 		return result, err
 	}
 	committed = true
-	_, err = s.db.ExecContext(ctx, `UPDATE analytics_sync_runs SET status='COMPLETED',rows_written=?,completed_at=NOW() WHERE id=?`, result.RowsWritten, runID)
+	_, err = s.db.ExecContext(ctx, nativeSQL(`UPDATE analytics_sync_runs SET status='COMPLETED',rows_written=?,completed_at=NOW() WHERE id=?`, `UPDATE analytics_sync_runs SET status='COMPLETED',rows_written=?,completed_at=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id=?`), result.RowsWritten, runID)
 	return result, err
 }
 
@@ -449,11 +447,11 @@ func (s *Service) markRunFailed(ctx context.Context, runID int64, cause error) {
 	if len(message) > 500 {
 		message = message[:500]
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE analytics_sync_runs SET status='FAILED',error_message=?,completed_at=NOW() WHERE id=?`, message, runID)
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE analytics_sync_runs SET status='FAILED',error_message=?,completed_at=NOW() WHERE id=?`, `UPDATE analytics_sync_runs SET status='FAILED',error_message=?,completed_at=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id=?`), message, runID)
 }
 
 func (s *Service) refreshInvoices(ctx context.Context, tx *sql.Tx, tenantID int, dateRange DateRange) (int, error) {
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT i.id,i.invoice_date,COALESCE(i.status,''),COALESCE(i.currency,'EUR'),
 		       COALESCE(i.total,i.amount),COALESCE(i.customer_name,''),COALESCE(i.customer_surname,''),
 		       COALESCE(i.customer_email,''),
@@ -462,7 +460,16 @@ func (s *Service) refreshInvoices(ctx context.Context, tx *sql.Tx, tenantID int,
 		FROM invoices i
 		WHERE i.restaurant_id=? AND i.invoice_date BETWEEN ? AND ? AND i.status <> 'borrador'
 		ORDER BY i.id
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT i.id,i.invoice_date,COALESCE(CAST(i.status AS text),''),COALESCE(i.currency,'EUR'),
+		       COALESCE(i.total,i.amount),COALESCE(i.customer_name,''),COALESCE(i.customer_surname,''),
+		       COALESCE(i.customer_email,''),
+		       CONCAT(CASE WHEN COALESCE(i.customer_phone_country_code,'')='' OR COALESCE(i.customer_phone,'')='' THEN '' ELSE CONCAT('+',i.customer_phone_country_code,' ') END,COALESCE(i.customer_phone,'')),
+		       COALESCE(i.customer_dni_cif,'')
+		FROM invoices i
+		WHERE i.restaurant_id=? AND i.invoice_date BETWEEN ? AND ? AND i.status <> 'borrador'
+		ORDER BY i.id
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return 0, err
 	}
@@ -509,7 +516,7 @@ func (s *Service) refreshInvoices(ctx context.Context, tx *sql.Tx, tenantID int,
 				return written, err
 			}
 		}
-		lineRows, err := tx.QueryContext(ctx, `SELECT id,description,quantity,line_total FROM invoice_line_items WHERE invoice_id=? ORDER BY id`, invoiceID)
+		lineRows, err := tx.QueryContext(ctx, portableSQL(`SELECT id,description,quantity,line_total FROM invoice_line_items WHERE invoice_id=? ORDER BY id`), invoiceID)
 		if err != nil {
 			return written, err
 		}
@@ -544,7 +551,7 @@ func (s *Service) refreshInvoices(ctx context.Context, tx *sql.Tx, tenantID int,
 }
 
 func (s *Service) refreshPOS(ctx context.Context, tx *sql.Tx, tenantID int, dateRange DateRange) (int, error) {
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT t.id,t.visit_id,t.status,t.total_gross_cents,t.refunded_cents,v.service_date,
 		       COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,'')
 		FROM pos_tickets t
@@ -552,7 +559,15 @@ func (s *Service) refreshPOS(ctx context.Context, tx *sql.Tx, tenantID int, date
 		WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ?
 		  AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')
 		ORDER BY t.id
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT t.id,t.visit_id,CAST(t.status AS text),t.total_gross_cents,t.refunded_cents,v.service_date,
+		       COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,'')
+		FROM pos_tickets t
+		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
+		WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ?
+		  AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')
+		ORDER BY t.id
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return 0, err
 	}
@@ -594,7 +609,7 @@ func (s *Service) refreshPOS(ctx context.Context, tx *sql.Tx, tenantID int, date
 				return written, err
 			}
 		}
-		lineRows, err := tx.QueryContext(ctx, `
+		lineRows, err := tx.QueryContext(ctx, portableSQL(`
 			SELECT l.id,l.product_name_snapshot,l.quantity,l.line_total_gross_cents,
 			       COALESCE(SUM(CASE WHEN r.status='COMPLETED' THEN rl.amount_cents ELSE 0 END),0)
 			FROM pos_ticket_lines l
@@ -603,7 +618,7 @@ func (s *Service) refreshPOS(ctx context.Context, tx *sql.Tx, tenantID int, date
 			WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'
 			GROUP BY l.id,l.product_name_snapshot,l.quantity,l.line_total_gross_cents
 			ORDER BY l.id
-		`, tenantID, ticketID)
+		`), tenantID, ticketID)
 		if err != nil {
 			return written, err
 		}
@@ -644,7 +659,7 @@ func (s *Service) upsertCustomer(ctx context.Context, tx *sql.Tx, tenantID int, 
 		return 0, nil
 	}
 	name := strings.TrimSpace(identity.Name)
-	_, err := tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO analytics_customers (restaurant_id,identity_key,display_name,email,phone,tax_id,first_seen,last_seen)
 		VALUES (?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE
@@ -654,21 +669,35 @@ func (s *Service) upsertCustomer(ctx context.Context, tx *sql.Tx, tenantID int, 
 		 tax_id=COALESCE(NULLIF(VALUES(tax_id),''),tax_id),
 		 first_seen=CASE WHEN first_seen IS NULL OR VALUES(first_seen)<first_seen THEN VALUES(first_seen) ELSE first_seen END,
 		 last_seen=CASE WHEN last_seen IS NULL OR VALUES(last_seen)>last_seen THEN VALUES(last_seen) ELSE last_seen END
-	`, tenantID, key, name, strings.TrimSpace(identity.Email), strings.TrimSpace(identity.Phone), strings.TrimSpace(identity.TaxID), dateOnly(seenOn), dateOnly(seenOn))
+	`, `
+		INSERT INTO analytics_customers (restaurant_id,identity_key,display_name,email,phone,tax_id,first_seen,last_seen)
+		VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT (restaurant_id, app.norm_ascii(identity_key)) DO UPDATE SET
+		 display_name=COALESCE(NULLIF(EXCLUDED.display_name,''),analytics_customers.display_name),
+		 email=COALESCE(NULLIF(EXCLUDED.email,''),analytics_customers.email),
+		 phone=COALESCE(NULLIF(EXCLUDED.phone,''),analytics_customers.phone),
+		 tax_id=COALESCE(NULLIF(EXCLUDED.tax_id,''),analytics_customers.tax_id),
+		 first_seen=CASE WHEN analytics_customers.first_seen IS NULL OR EXCLUDED.first_seen<analytics_customers.first_seen THEN EXCLUDED.first_seen ELSE analytics_customers.first_seen END,
+		 last_seen=CASE WHEN analytics_customers.last_seen IS NULL OR EXCLUDED.last_seen>analytics_customers.last_seen THEN EXCLUDED.last_seen ELSE analytics_customers.last_seen END
+	`), tenantID, key, name, strings.TrimSpace(identity.Email), strings.TrimSpace(identity.Phone), strings.TrimSpace(identity.TaxID), dateOnly(seenOn), dateOnly(seenOn))
 	if err != nil {
 		return 0, err
 	}
 	var id int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM analytics_customers WHERE restaurant_id=? AND identity_key=?`, tenantID, key).Scan(&id)
+	err = tx.QueryRowContext(ctx, nativeSQL(`SELECT id FROM analytics_customers WHERE restaurant_id=? AND identity_key=?`, `SELECT id FROM analytics_customers WHERE restaurant_id=? AND app.norm_ascii(identity_key) = app.norm_ascii(?)`), tenantID, key).Scan(&id)
 	return id, err
 }
 
 func (s *Service) upsertCustomerSource(ctx context.Context, tx *sql.Tx, tenantID int, customerID int64, sourceType string, sourceID int64) error {
-	_, err := tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO analytics_customer_sources (restaurant_id,customer_id,source_type,source_ref)
 		VALUES (?,?,?,?)
 		ON DUPLICATE KEY UPDATE customer_id=VALUES(customer_id)
-	`, tenantID, customerID, sourceType, strconv.FormatInt(sourceID, 10))
+	`, `
+		INSERT INTO analytics_customer_sources (restaurant_id,customer_id,source_type,source_ref)
+		VALUES (?,?,?,?)
+		ON CONFLICT (restaurant_id, app.norm(source_type), app.norm(source_ref)) DO UPDATE SET customer_id=EXCLUDED.customer_id
+	`), tenantID, customerID, sourceType, strconv.FormatInt(sourceID, 10))
 	return err
 }
 
@@ -677,32 +706,40 @@ func (s *Service) upsertDocument(ctx context.Context, tx *sql.Tx, tenantID int, 
 	if customerID > 0 {
 		customer = customerID
 	}
-	_, err := tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO analytics_sales_documents (restaurant_id,source_type,source_id,customer_id,occurred_on,status,currency,gross_cents,refunded_cents)
 		VALUES (?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE customer_id=VALUES(customer_id),occurred_on=VALUES(occurred_on),status=VALUES(status),currency=VALUES(currency),gross_cents=VALUES(gross_cents),refunded_cents=VALUES(refunded_cents)
-	`, tenantID, sourceType, sourceID, customer, dateOnly(occurredOn), status, strings.ToUpper(strings.TrimSpace(currency)), gross, refunded)
+	`, `
+		INSERT INTO analytics_sales_documents (restaurant_id,source_type,source_id,customer_id,occurred_on,status,currency,gross_cents,refunded_cents)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (restaurant_id, source_type, source_id) DO UPDATE SET customer_id=EXCLUDED.customer_id,occurred_on=EXCLUDED.occurred_on,status=EXCLUDED.status,currency=EXCLUDED.currency,gross_cents=EXCLUDED.gross_cents,refunded_cents=EXCLUDED.refunded_cents
+	`), tenantID, sourceType, sourceID, customer, dateOnly(occurredOn), status, strings.ToUpper(strings.TrimSpace(currency)), gross, refunded)
 	if err != nil {
 		return 0, err
 	}
 	var documentID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM analytics_sales_documents WHERE restaurant_id=? AND source_type=? AND source_id=?`, tenantID, sourceType, sourceID).Scan(&documentID)
+	err = tx.QueryRowContext(ctx, portableSQL(`SELECT id FROM analytics_sales_documents WHERE restaurant_id=? AND source_type=? AND source_id=?`), tenantID, sourceType, sourceID).Scan(&documentID)
 	return documentID, err
 }
 
 func (s *Service) upsertSalesLine(ctx context.Context, tx *sql.Tx, tenantID int, documentID, sourceLineID int64, description string, quantity float64, revenue, refunded int64) error {
-	_, err := tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO analytics_sales_lines (restaurant_id,sales_document_id,source_line_id,description,quantity,revenue_cents,refunded_cents)
 		VALUES (?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE description=VALUES(description),quantity=VALUES(quantity),revenue_cents=VALUES(revenue_cents),refunded_cents=VALUES(refunded_cents)
-	`, tenantID, documentID, sourceLineID, description, quantity, revenue, refunded)
+	`, `
+		INSERT INTO analytics_sales_lines (restaurant_id,sales_document_id,source_line_id,description,quantity,revenue_cents,refunded_cents)
+		VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT (restaurant_id, sales_document_id, source_line_id) DO UPDATE SET description=EXCLUDED.description,quantity=EXCLUDED.quantity,revenue_cents=EXCLUDED.revenue_cents,refunded_cents=EXCLUDED.refunded_cents
+	`), tenantID, documentID, sourceLineID, description, quantity, revenue, refunded)
 	return err
 }
 
 func cents(value float64) int64 { return int64(math.Round(value * 100)) }
 
 func (s *Service) refreshStock(ctx context.Context, tx *sql.Tx, tenantID int, dateRange DateRange) (int, error) {
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT m.id,m.stock_item_id,m.occurred_at,m.type,COALESCE(m.waste_reason,''),m.qty_base,
 		       m.total_cost,m.unit_cost,
 		       (SELECT p.unit_cost_base FROM stock_item_prices p
@@ -713,7 +750,18 @@ func (s *Service) refreshStock(ctx context.Context, tx *sql.Tx, tenantID int, da
 		FROM stock_movements m
 		WHERE m.restaurant_id=? AND DATE(m.occurred_at) BETWEEN ? AND ?
 		ORDER BY m.id
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT m.id,m.stock_item_id,m.occurred_at,CAST(m.type AS text),COALESCE(CAST(m.waste_reason AS text),''),m.qty_base,
+		       m.total_cost,m.unit_cost,
+		       (SELECT p.unit_cost_base FROM stock_item_prices p
+		          WHERE p.restaurant_id=m.restaurant_id AND p.stock_item_id=m.stock_item_id AND p.effective_at<=m.occurred_at
+		          ORDER BY p.effective_at DESC,p.id DESC LIMIT 1),
+		       (SELECT ROUND(AVG(l.avg_unit_cost), 10) FROM stock_levels l
+		          WHERE l.restaurant_id=m.restaurant_id AND l.stock_item_id=m.stock_item_id)
+		FROM stock_movements m
+		WHERE m.restaurant_id=? AND CAST(m.occurred_at AS date) BETWEEN ? AND ?
+		ORDER BY m.id
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return 0, err
 	}
@@ -757,13 +805,19 @@ func (s *Service) refreshStock(ctx context.Context, tx *sql.Tx, tenantID int, da
 	}
 	// Recipe waste is expected production loss; explicit WASTE movements remain
 	// separate, so reporting can show recorded and recipe-derived waste.
-	productionRows, err := tx.QueryContext(ctx, `
+	productionRows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT p.id,p.produced_at,p.qty_produced_base,r.output_item_id,r.waste_pct
 		FROM stock_production_orders p
 		JOIN stock_recipes r ON r.restaurant_id=p.restaurant_id AND r.id=p.recipe_id
 		WHERE p.restaurant_id=? AND DATE(p.produced_at) BETWEEN ? AND ? AND p.status='CONFIRMED' AND r.waste_pct>0
 		ORDER BY p.id
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT p.id,p.produced_at,p.qty_produced_base,r.output_item_id,r.waste_pct
+		FROM stock_production_orders p
+		JOIN stock_recipes r ON r.restaurant_id=p.restaurant_id AND r.id=p.recipe_id
+		WHERE p.restaurant_id=? AND CAST(p.produced_at AS date) BETWEEN ? AND ? AND p.status='CONFIRMED' AND r.waste_pct>0
+		ORDER BY p.id
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return written, err
 	}
@@ -808,14 +862,21 @@ func (s *Service) refreshStock(ctx context.Context, tx *sql.Tx, tenantID int, da
 
 	// Actual component use above planned use is a separately attributable
 	// production variance. It is not folded into recipe percentage waste.
-	varianceRows, err := tx.QueryContext(ctx, `
+	varianceRows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT l.id,o.produced_at,l.stock_item_id,(l.actual_qty_base-l.planned_qty_base)
 		FROM stock_production_order_lines l
 		JOIN stock_production_orders o ON o.restaurant_id=l.restaurant_id AND o.id=l.production_order_id
 		WHERE l.restaurant_id=? AND DATE(o.produced_at) BETWEEN ? AND ? AND o.status='CONFIRMED'
 		  AND l.actual_qty_base>l.planned_qty_base
 		ORDER BY l.id
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT l.id,o.produced_at,l.stock_item_id,(l.actual_qty_base-l.planned_qty_base)
+		FROM stock_production_order_lines l
+		JOIN stock_production_orders o ON o.restaurant_id=l.restaurant_id AND o.id=l.production_order_id
+		WHERE l.restaurant_id=? AND CAST(o.produced_at AS date) BETWEEN ? AND ? AND o.status='CONFIRMED'
+		  AND l.actual_qty_base>l.planned_qty_base
+		ORDER BY l.id
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return written, err
 	}
@@ -861,13 +922,19 @@ func nullFloatPointer(value sql.NullFloat64) *float64 {
 
 func (s *Service) itemCostAt(ctx context.Context, tx *sql.Tx, tenantID int, itemID int64, occurred time.Time, quantity float64) (float64, bool, error) {
 	var price, average sql.NullFloat64
-	err := tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 		 (SELECT p.unit_cost_base FROM stock_item_prices p
 		   WHERE p.restaurant_id=? AND p.stock_item_id=? AND p.effective_at<=?
 		   ORDER BY p.effective_at DESC,p.id DESC LIMIT 1),
 		 (SELECT AVG(l.avg_unit_cost) FROM stock_levels l WHERE l.restaurant_id=? AND l.stock_item_id=?)
-	`, tenantID, itemID, occurred, tenantID, itemID).Scan(&price, &average)
+	`, `
+		SELECT
+		 (SELECT p.unit_cost_base FROM stock_item_prices p
+		   WHERE p.restaurant_id=? AND p.stock_item_id=? AND p.effective_at<=?
+		   ORDER BY p.effective_at DESC,p.id DESC LIMIT 1),
+		 (SELECT ROUND(AVG(l.avg_unit_cost), 10) FROM stock_levels l WHERE l.restaurant_id=? AND l.stock_item_id=?)
+	`), tenantID, itemID, occurred, tenantID, itemID).Scan(&price, &average)
 	if err != nil {
 		return 0, false, err
 	}
@@ -880,11 +947,15 @@ func (s *Service) insertStockFact(ctx context.Context, tx *sql.Tx, tenantID int,
 	if known {
 		costArg = cents(cost)
 	}
-	_, err := tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO analytics_stock_facts (restaurant_id,source_type,source_id,occurred_on,stock_item_id,fact_type,waste_reason,quantity_base,cost_cents,cost_known)
 		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE occurred_on=VALUES(occurred_on),stock_item_id=VALUES(stock_item_id),fact_type=VALUES(fact_type),waste_reason=VALUES(waste_reason),quantity_base=VALUES(quantity_base),cost_cents=VALUES(cost_cents),cost_known=VALUES(cost_known)
-	`, tenantID, sourceType, sourceID, dateOnly(occurred), itemID, factType, reason, quantity, costArg, boolInt(known))
+	`, `
+		INSERT INTO analytics_stock_facts (restaurant_id,source_type,source_id,occurred_on,stock_item_id,fact_type,waste_reason,quantity_base,cost_cents,cost_known)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (restaurant_id, app.norm(source_type), source_id) DO UPDATE SET occurred_on=EXCLUDED.occurred_on,stock_item_id=EXCLUDED.stock_item_id,fact_type=EXCLUDED.fact_type,waste_reason=EXCLUDED.waste_reason,quantity_base=EXCLUDED.quantity_base,cost_cents=EXCLUDED.cost_cents,cost_known=EXCLUDED.cost_known
+	`), tenantID, sourceType, sourceID, dateOnly(occurred), itemID, factType, reason, quantity, costArg, boolInt(known))
 	return err
 }
 
@@ -907,7 +978,7 @@ func (s *Service) rebuildRollups(ctx context.Context, tx *sql.Tx, tenantID int, 
 	for date := dateRange.From; !date.After(dateRange.To); date = date.AddDate(0, 0, 1) {
 		byDate[date.Format("2006-01-02")] = &rollupAccumulator{DailyAggregate: DailyAggregate{WasteBreakdown: make(map[string]WasteBreakdownValue)}}
 	}
-	docRows, err := tx.QueryContext(ctx, `SELECT occurred_on,source_type,status,currency,gross_cents,refunded_cents,customer_id FROM analytics_sales_documents WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`, tenantID, dateRange.From, dateRange.To)
+	docRows, err := tx.QueryContext(ctx, nativeSQL(`SELECT occurred_on,source_type,status,currency,gross_cents,refunded_cents,customer_id FROM analytics_sales_documents WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`, `SELECT occurred_on,CAST(source_type AS text),status,currency,gross_cents,refunded_cents,customer_id FROM analytics_sales_documents WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return err
 	}
@@ -944,7 +1015,7 @@ func (s *Service) rebuildRollups(ctx context.Context, tx *sql.Tx, tenantID int, 
 		return err
 	}
 	docRows.Close()
-	factRows, err := tx.QueryContext(ctx, `SELECT occurred_on,fact_type,waste_reason,quantity_base,COALESCE(cost_cents,0),cost_known FROM analytics_stock_facts WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`, tenantID, dateRange.From, dateRange.To)
+	factRows, err := tx.QueryContext(ctx, portableSQL(`SELECT occurred_on,fact_type,waste_reason,quantity_base,COALESCE(cost_cents,0),cost_known FROM analytics_stock_facts WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ?`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return err
 	}
@@ -1024,10 +1095,13 @@ func (s *Service) rebuildRollups(ctx context.Context, tx *sql.Tx, tenantID int, 
 		if marshalErr != nil {
 			return marshalErr
 		}
-		if _, err = tx.ExecContext(ctx, `
+		if _, err = tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO analytics_daily_rollups (restaurant_id,rollup_date,invoiced_revenue_cents,pos_revenue_cents,pos_refunded_cents,cogs_known_cost_cents,cogs_quantity,cogs_known_quantity,stock_purchase_known_cost_cents,stock_purchase_quantity,stock_purchase_known_quantity,stock_purchase_unknown_quantity,stock_return_known_cost_cents,stock_return_quantity,stock_return_known_quantity,waste_known_cost_cents,waste_quantity,waste_unknown_quantity,sales_documents,identified_sales_documents,non_eur_documents,waste_breakdown_json)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		`, tenantID, key, day.InvoicedRevenueCents, day.POSRevenueCents, day.POSRefundCents, day.COGSKnownCostCents, day.COGSQuantity, day.COGSKnownQuantity, day.StockPurchaseKnownCostCents, day.StockPurchaseQuantity, day.StockPurchaseKnownQuantity, day.StockPurchaseUnknownQuantity, day.StockReturnKnownCostCents, day.StockReturnQuantity, day.StockReturnKnownQuantity, day.WasteKnownCostCents, day.WasteQuantity, day.WasteUnknownQuantity, day.SalesDocuments, day.IdentifiedSalesDocuments, day.NonEURDocuments, wasteJSON); err != nil {
+		`, `
+			INSERT INTO analytics_daily_rollups (restaurant_id,rollup_date,invoiced_revenue_cents,pos_revenue_cents,pos_refunded_cents,cogs_known_cost_cents,cogs_quantity,cogs_known_quantity,stock_purchase_known_cost_cents,stock_purchase_quantity,stock_purchase_known_quantity,stock_purchase_unknown_quantity,stock_return_known_cost_cents,stock_return_quantity,stock_return_known_quantity,waste_known_cost_cents,waste_quantity,waste_unknown_quantity,sales_documents,identified_sales_documents,non_eur_documents,waste_breakdown_json)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS jsonb))
+		`), tenantID, key, day.InvoicedRevenueCents, day.POSRevenueCents, day.POSRefundCents, day.COGSKnownCostCents, day.COGSQuantity, day.COGSKnownQuantity, day.StockPurchaseKnownCostCents, day.StockPurchaseQuantity, day.StockPurchaseKnownQuantity, day.StockPurchaseUnknownQuantity, day.StockReturnKnownCostCents, day.StockReturnQuantity, day.StockReturnKnownQuantity, day.WasteKnownCostCents, day.WasteQuantity, day.WasteUnknownQuantity, day.SalesDocuments, day.IdentifiedSalesDocuments, day.NonEURDocuments, wasteJSON); err != nil {
 			return err
 		}
 	}
@@ -1179,7 +1253,7 @@ func analyticsContext(parent context.Context, timeout time.Duration) (context.Co
 }
 
 func (s *Service) loadRollups(ctx context.Context, tenantID int, dateRange DateRange) ([]dailyRollup, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT rollup_date,invoiced_revenue_cents,pos_revenue_cents,pos_refunded_cents,
 		       cogs_known_cost_cents,cogs_quantity,cogs_known_quantity,
 		       stock_purchase_known_cost_cents,stock_purchase_quantity,stock_purchase_known_quantity,stock_purchase_unknown_quantity,
@@ -1189,7 +1263,17 @@ func (s *Service) loadRollups(ctx context.Context, tenantID int, dateRange DateR
 		FROM analytics_daily_rollups
 		WHERE restaurant_id=? AND rollup_date BETWEEN ? AND ?
 		ORDER BY rollup_date
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT rollup_date,invoiced_revenue_cents,pos_revenue_cents,pos_refunded_cents,
+		       cogs_known_cost_cents,cogs_quantity,cogs_known_quantity,
+		       stock_purchase_known_cost_cents,stock_purchase_quantity,stock_purchase_known_quantity,stock_purchase_unknown_quantity,
+		       stock_return_known_cost_cents,stock_return_quantity,stock_return_known_quantity,
+		       waste_known_cost_cents,waste_quantity,waste_unknown_quantity,sales_documents,identified_sales_documents,
+		       non_eur_documents,CAST(waste_breakdown_json AS text)
+		FROM analytics_daily_rollups
+		WHERE restaurant_id=? AND rollup_date BETWEEN ? AND ?
+		ORDER BY rollup_date
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}
@@ -1213,10 +1297,10 @@ func (s *Service) loadRollups(ctx context.Context, tenantID int, dateRange DateR
 }
 
 func (s *Service) loadPeriodCustomers(ctx context.Context, tenantID int, dateRange DateRange, granularity Granularity) (map[string]map[int64]struct{}, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT occurred_on,customer_id FROM analytics_sales_documents
 		WHERE restaurant_id=? AND occurred_on BETWEEN ? AND ? AND currency='EUR' AND customer_id IS NOT NULL
-	`, tenantID, dateRange.From, dateRange.To)
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}

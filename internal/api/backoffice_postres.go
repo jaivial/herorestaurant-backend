@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boPostre struct {
@@ -28,12 +29,17 @@ func (s *Server) handleBOPostresList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	restaurantID := a.ActiveRestaurantID
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT NUM, DESCRIPCION, alergenos, active
 		FROM POSTRES
 		WHERE restaurant_id = ?
 		ORDER BY active DESC, NUM ASC
-	`, restaurantID)
+	`, `
+		SELECT "NUM", "DESCRIPCION", alergenos, active
+		FROM "POSTRES"
+		WHERE restaurant_id = ?
+		ORDER BY active DESC, "NUM" ASC
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando POSTRES")
 		return
@@ -123,15 +129,17 @@ func (s *Server) handleBOPostreCreate(w http.ResponseWriter, r *http.Request) {
 	alergJSON, _ := json.Marshal(req.Alergenos)
 
 	restaurantID := a.ActiveRestaurantID
-	res, err := s.db.ExecContext(r.Context(), `
+	newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`
 		INSERT INTO POSTRES (restaurant_id, DESCRIPCION, alergenos, active)
 		VALUES (?, ?, ?, ?)
-	`, restaurantID, desc, string(alergJSON), activeInt)
+	`, `
+		INSERT INTO "POSTRES" (restaurant_id, "DESCRIPCION", alergenos, active)
+		VALUES (?, ?, ?, ?)
+	`), `"NUM"`, restaurantID, desc, string(alergJSON), activeInt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error insertando POSTRES")
 		return
 	}
-	newID, _ := res.LastInsertId()
 
 	tr := s.translateEntityFields(r.Context(), restaurantID, entityPostres, newID, []translationField{
 		{Name: "descripcion", Text: desc},
@@ -187,7 +195,7 @@ func (s *Server) handleBOPostrePatch(w http.ResponseWriter, r *http.Request) {
 	)
 	if req.Descripcion != nil {
 		d := strings.TrimSpace(*req.Descripcion)
-		sets = append(sets, "DESCRIPCION = ?")
+		sets = append(sets, sqlFragment("DESCRIPCION = ?", `"DESCRIPCION" = ?`))
 		args = append(args, d)
 	}
 	if req.Alergenos != nil {
@@ -214,8 +222,18 @@ func (s *Server) handleBOPostrePatch(w http.ResponseWriter, r *http.Request) {
 	restaurantID := a.ActiveRestaurantID
 	args = append(args, id, restaurantID)
 
-	q := "UPDATE POSTRES SET " + strings.Join(sets, ", ") + " WHERE NUM = ? AND restaurant_id = ?"
-	res, err := s.db.ExecContext(r.Context(), q, args...)
+	q := sqlFragment("UPDATE POSTRES SET ", `UPDATE "POSTRES" SET `) + strings.Join(sets, ", ") + sqlFragment(" WHERE NUM = ? AND restaurant_id = ?", ` WHERE "NUM" = ? AND restaurant_id = ?`)
+	execArgs := args
+	if sqlDialect == sqldb.Postgres { // changed-rows contract (affected==0 -> not found)
+		pred, extra, ok := pgChangedRowsPredicate(sets, args[:len(args)-2], postresPGTypes)
+		if !ok {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando POSTRES")
+			return
+		}
+		q += pred
+		execArgs = append(append([]any{}, args...), extra...)
+	}
+	res, err := s.db.ExecContext(r.Context(), portableSQL(q), execArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando POSTRES")
 		return
@@ -260,7 +278,7 @@ func (s *Server) handleBOPostreDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	restaurantID := a.ActiveRestaurantID
-	res, err := s.db.ExecContext(r.Context(), "DELETE FROM POSTRES WHERE NUM = ? AND restaurant_id = ?", id, restaurantID)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL("DELETE FROM POSTRES WHERE NUM = ? AND restaurant_id = ?", `DELETE FROM "POSTRES" WHERE "NUM" = ? AND restaurant_id = ?`), id, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando POSTRES")
 		return

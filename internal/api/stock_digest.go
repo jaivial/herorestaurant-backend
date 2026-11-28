@@ -110,7 +110,7 @@ func (s *Server) stockDigestSend(ctx context.Context, rid int, to, text string) 
 }
 
 func (s *Server) stockDigestRestaurantIDs(ctx context.Context) ([]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM restaurants ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id FROM restaurants ORDER BY id`))
 	if err != nil {
 		return nil, err
 	}
@@ -127,13 +127,13 @@ func (s *Server) stockDigestRestaurantIDs(ctx context.Context) ([]int, error) {
 }
 
 func (s *Server) stockDigestRecipients(ctx context.Context, restaurantID int) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT DISTINCT rm.whatsapp_number
 		FROM restaurant_members rm
 		JOIN bo_user_restaurants ur ON ur.user_id = rm.bo_user_id AND ur.restaurant_id = rm.restaurant_id
 		WHERE rm.restaurant_id = ? AND rm.is_active = 1
 		  AND rm.whatsapp_verified_at IS NOT NULL AND rm.whatsapp_number IS NOT NULL AND rm.whatsapp_number <> ''
-		  AND ur.role IN ('root','admin')`, restaurantID)
+		  AND ur.role IN ('root','admin')`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func writeDigestLines(b *strings.Builder, lines []string) {
 func (s *Server) stockDigestLowStock(ctx context.Context, restaurantID int) ([]string, error) {
 	qctx, cancel := context.WithTimeout(ctx, stockDigestQueryTimeout)
 	defer cancel()
-	rows, err := s.db.QueryContext(qctx, `
+	rows, err := s.db.QueryContext(qctx, nativeSQL(`
 		SELECT i.name, i.base_unit, COALESCE(SUM(l.qty_base),0), COALESCE(SUM(l.reorder_point_base),0)
 		FROM stock_items i
 		JOIN stock_levels l ON l.restaurant_id = i.restaurant_id AND l.stock_item_id = i.id
@@ -198,7 +198,15 @@ func (s *Server) stockDigestLowStock(ctx context.Context, restaurantID int) ([]s
 		GROUP BY i.id, i.name, i.base_unit
 		HAVING SUM(l.reorder_point_base) > 0 AND SUM(l.qty_base) < SUM(l.reorder_point_base)
 		ORDER BY SUM(l.qty_base) - SUM(l.reorder_point_base), i.name
-		LIMIT 20`, restaurantID)
+		LIMIT 20`, `
+		SELECT i.name, CAST(i.base_unit AS text), COALESCE(SUM(l.qty_base),0), COALESCE(SUM(l.reorder_point_base),0)
+		FROM stock_items i
+		JOIN stock_levels l ON l.restaurant_id = i.restaurant_id AND l.stock_item_id = i.id
+		WHERE i.restaurant_id = ? AND i.is_active = 1 AND i.is_tracked = 1 AND i.deleted_at IS NULL
+		GROUP BY i.id, i.name, i.base_unit
+		HAVING SUM(l.reorder_point_base) > 0 AND SUM(l.qty_base) < SUM(l.reorder_point_base)
+		ORDER BY SUM(l.qty_base) - SUM(l.reorder_point_base), i.name COLLATE "es-x-icu"
+		LIMIT 20`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +226,14 @@ func (s *Server) stockDigestLowStock(ctx context.Context, restaurantID int) ([]s
 func (s *Server) stockDigestExpiring(ctx context.Context, restaurantID int) ([]string, error) {
 	qctx, cancel := context.WithTimeout(ctx, stockDigestQueryTimeout)
 	defer cancel()
-	rows, err := s.db.QueryContext(qctx, `
+	// PG: m.restaurant_id/m.stock_item_id are not grouped; they equal
+	// i.restaurant_id/i.id through the join (i.id is the PK, so both are
+	// functionally dependent). m.warehouse_id is NOT grouped and MySQL
+	// (no ONLY_FULL_GROUP_BY) picks an arbitrary row's value for items stocked
+	// in several warehouses; any_value() keeps that same indeterminate
+	// contract (PG16+), it is not proven to pick the same row - pending QA.
+	// expires_at is a naive UTC datetime -> NOW() as UTC wall clock, seconds.
+	rows, err := s.db.QueryContext(qctx, nativeSQL(`
 		SELECT i.name, i.base_unit, MIN(m.expires_at), SUM(m.qty_base),
 		       (SELECT COALESCE(SUM(-o.qty_base),0) FROM stock_movements o
 		          WHERE o.restaurant_id = m.restaurant_id AND o.stock_item_id = m.stock_item_id
@@ -230,7 +245,19 @@ func (s *Server) stockDigestExpiring(ctx context.Context, restaurantID int) ([]s
 		  AND m.expires_at <= DATE_ADD(NOW(), INTERVAL ? DAY) AND m.qty_base > 0
 		GROUP BY i.id, i.name, i.base_unit
 		ORDER BY MIN(m.expires_at), i.name
-		LIMIT 20`, restaurantID, stockDigestExpiringDays)
+		LIMIT 20`, `
+		SELECT i.name, CAST(i.base_unit AS text), MIN(m.expires_at), SUM(m.qty_base),
+		       (SELECT COALESCE(SUM(-o.qty_base),0) FROM stock_movements o
+		          WHERE o.restaurant_id = i.restaurant_id AND o.stock_item_id = i.id
+		            AND o.warehouse_id = any_value(m.warehouse_id) AND o.qty_base < 0
+		            AND o.occurred_at >= MIN(m.occurred_at))
+		FROM stock_movements m
+		JOIN stock_items i ON i.id = m.stock_item_id AND i.restaurant_id = m.restaurant_id AND i.deleted_at IS NULL
+		WHERE m.restaurant_id = ? AND m.expires_at IS NOT NULL AND m.expires_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')
+		  AND m.expires_at <= date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + CAST(? AS integer) * INTERVAL '1 day' AND m.qty_base > 0
+		GROUP BY i.id, i.name, i.base_unit
+		ORDER BY MIN(m.expires_at), i.name COLLATE "es-x-icu"
+		LIMIT 20`), restaurantID, stockDigestExpiringDays)
 	if err != nil {
 		return nil, err
 	}

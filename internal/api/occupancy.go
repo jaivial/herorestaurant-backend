@@ -20,18 +20,18 @@ func (s *Server) adjustOccupancy(ctx context.Context, ex execQueryer, restaurant
 		return nil
 	}
 	if delta > 0 {
-		_, err := ex.ExecContext(ctx, `
+		_, err := ex.ExecContext(ctx, nativeSQL(`
 			INSERT INTO reservation_location_occupancy (restaurant_id, date, scope, target_id, count)
 			VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE count = count + VALUES(count)
-		`, restaurantID, date, scope, targetID, delta)
+		`, `INSERT INTO reservation_location_occupancy (restaurant_id, date, scope, target_id, count) VALUES (?, ?, ?, ?, ?) ON CONFLICT (restaurant_id, date, scope, target_id) DO UPDATE SET count = reservation_location_occupancy.count + EXCLUDED.count`), restaurantID, date, scope, targetID, delta)
 		return err
 	}
-	_, err := ex.ExecContext(ctx, `
+	_, err := ex.ExecContext(ctx, portableSQL(`
 		UPDATE reservation_location_occupancy
 		SET count = GREATEST(count + ?, 0)
 		WHERE restaurant_id = ? AND date = ? AND scope = ? AND target_id = ?
-	`, delta, restaurantID, date, scope, targetID)
+	`), delta, restaurantID, date, scope, targetID)
 	return err
 }
 
@@ -71,11 +71,11 @@ func (s *Server) applyBookingLocationDelta(ctx context.Context, ex execQueryer, 
 // id for the occupancy ledger.
 func (s *Server) floorIDByNumber(ctx context.Context, ex execQueryer, restaurantID int, floorNumber int) (int, error) {
 	var id int
-	err := ex.QueryRowContext(ctx, `
+	err := ex.QueryRowContext(ctx, portableSQL(`
 		SELECT id FROM restaurant_floors
 		WHERE restaurant_id = ? AND floor_number = ? AND specific_date IS NULL
 		LIMIT 1
-	`, restaurantID, floorNumber).Scan(&id)
+	`), restaurantID, floorNumber).Scan(&id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
@@ -142,10 +142,13 @@ func (s *Server) bookingLocationSnapshot(ctx context.Context, restaurantID, book
 	var d sql.NullString
 	var p sql.NullInt64
 	var f, sl sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), party_size, preferred_floor_number, preferred_salon_id
 		FROM bookings WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, bookingID).Scan(&d, &p, &f, &sl)
+	`, `
+		SELECT to_char(reservation_date, 'YYYY-MM-DD'), party_size, preferred_floor_number, preferred_salon_id
+		FROM bookings WHERE restaurant_id = ? AND id = ?
+	`), restaurantID, bookingID).Scan(&d, &p, &f, &sl)
 	if err != nil {
 		return "", 0, nil, nil, err
 	}
@@ -167,11 +170,11 @@ func (s *Server) bookingLocationSnapshot(ctx context.Context, restaurantID, book
 // loadOccupancyForDate builds scope -> target_id -> count for a given date.
 // Used to gate availability in the public day-context endpoint.
 func (s *Server) loadOccupancyForDate(ctx context.Context, restaurantID int, date string) (map[string]map[int]int, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT scope, target_id, count
 		FROM reservation_location_occupancy
 		WHERE restaurant_id = ? AND date = ?
-	`, restaurantID, date)
+	`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}

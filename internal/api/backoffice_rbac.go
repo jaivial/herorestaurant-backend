@@ -225,12 +225,17 @@ func (s *Server) roleCanAccessSection(ctx context.Context, role, section string)
 	}
 
 	var allowed int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT is_allowed
 		FROM bo_role_permissions
 		WHERE role_slug = ? AND section_key = ?
 		LIMIT 1
-	`, role, section).Scan(&allowed)
+	`, `
+		SELECT is_allowed
+		FROM bo_role_permissions
+		WHERE app.norm_ascii(role_slug) = app.norm_ascii(?) AND app.norm_ascii(section_key) = app.norm_ascii(?)
+		LIMIT 1
+	`), role, section).Scan(&allowed)
 	if err == nil {
 		return allowed != 0, nil
 	}
@@ -249,12 +254,17 @@ func (s *Server) roleImportance(ctx context.Context, role string) (int, error) {
 	}
 
 	var importance int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT importance
 		FROM bo_roles
 		WHERE slug = ? AND is_active = 1
 		LIMIT 1
-	`, role).Scan(&importance)
+	`, `
+		SELECT importance
+		FROM bo_roles
+		WHERE app.norm_ascii(slug) = app.norm_ascii(?) AND is_active = 1
+		LIMIT 1
+	`), role).Scan(&importance)
 	if err == nil {
 		if importance < 0 {
 			return 0, nil
@@ -281,12 +291,17 @@ func (s *Server) roleExists(ctx context.Context, role string) (bool, error) {
 	}
 
 	var tmp int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT 1
 		FROM bo_roles
 		WHERE slug = ? AND is_active = 1
 		LIMIT 1
-	`, role).Scan(&tmp)
+	`, `
+		SELECT 1
+		FROM bo_roles
+		WHERE app.norm_ascii(slug) = app.norm_ascii(?) AND is_active = 1
+		LIMIT 1
+	`), role).Scan(&tmp)
 	if err == nil {
 		return true, nil
 	}
@@ -311,12 +326,17 @@ func (s *Server) roleSectionsForVersion(ctx context.Context, role, appVersion st
 	}
 	isAdminOperational := role == "root" || role == "admin"
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT section_key
 		FROM bo_role_permissions
 		WHERE role_slug = ? AND is_allowed = 1
 		ORDER BY section_key ASC
-	`, role)
+	`, `
+		SELECT section_key
+		FROM bo_role_permissions
+		WHERE app.norm_ascii(role_slug) = app.norm_ascii(?) AND is_allowed = 1
+		ORDER BY section_key ASC
+	`), role)
 	if err != nil {
 		return nil, err
 	}

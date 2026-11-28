@@ -1,0 +1,1 @@
+{"name": "QA Campaña", "subject": "QA", "body_markdown": "QA", "channels": ["email"], "audience": "manual", "manual_recipients": ["qa-camp@invalid.local"], "email_per_minute": 1, "whatsapp_per_minute": 1}

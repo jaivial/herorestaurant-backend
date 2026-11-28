@@ -71,10 +71,10 @@ func (s *Server) IssueChatGPTPluginToken(ctx context.Context, userID, restaurant
 	if len(label) > 128 {
 		label = label[:128]
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		INSERT INTO chatgpt_plugin_tokens (user_id, restaurant_id, token_hash, label)
 		VALUES (?, ?, ?, ?)
-	`, userID, restaurantID, tokenSHA, nullString(label))
+	`), userID, restaurantID, tokenSHA, nullString(label))
 	if err != nil {
 		return "", err
 	}
@@ -88,12 +88,12 @@ func (s *Server) userHasRestaurant(ctx context.Context, userID, restaurantID int
 		return false, errors.New("database unavailable")
 	}
 	var n int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*)
 		FROM bo_user_restaurants ur
 		JOIN bo_users u ON u.id = ur.user_id
 		WHERE ur.user_id = ? AND ur.restaurant_id = ? AND (u.is_superadmin <> 0 OR ur.role IS NOT NULL)
-	`, userID, restaurantID).Scan(&n)
+	`), userID, restaurantID).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -109,13 +109,17 @@ func (s *Server) RevokeChatGPTPluginTokens(ctx context.Context, userID, restaura
 	if userID <= 0 {
 		return 0, errors.New("user is required")
 	}
-	q := `UPDATE chatgpt_plugin_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL`
+	// revoked_at is timestamp (PG timestamptz): date_trunc('second', statement_timestamp()). RowsAffected: NULL -> now,
+	// so changed rows == matched rows on both dialects.
+	mq := `UPDATE chatgpt_plugin_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL`
+	pq := `UPDATE chatgpt_plugin_tokens SET revoked_at = date_trunc('second', statement_timestamp()) WHERE user_id = ? AND revoked_at IS NULL`
 	args := []any{userID}
 	if restaurantID > 0 {
-		q += ` AND restaurant_id = ?`
+		mq += ` AND restaurant_id = ?`
+		pq += ` AND restaurant_id = ?`
 		args = append(args, restaurantID)
 	}
-	res, err := s.db.ExecContext(ctx, q, args...)
+	res, err := s.db.ExecContext(ctx, nativeSQL(mq, pq), args...)
 	if err != nil {
 		return 0, err
 	}
@@ -133,7 +137,7 @@ func (s *Server) resolveChatGPTPluginToken(ctx context.Context, token string) (b
 	tokenSHA := sha256Hex(token)
 
 	var row chatgptPluginTokenRow
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			t.id, t.user_id, t.restaurant_id, t.token_hash,
 			COALESCE(t.label, ''), COALESCE(t.scopes_json, ''), t.revoked_at,
@@ -145,7 +149,19 @@ func (s *Server) resolveChatGPTPluginToken(ctx context.Context, token string) (b
 			ON ur.user_id = t.user_id AND ur.restaurant_id = t.restaurant_id
 		WHERE t.token_hash = ?
 		LIMIT 1
-	`, tokenSHA).Scan(
+	`, `
+		SELECT
+			t.id, t.user_id, t.restaurant_id, t.token_hash,
+			COALESCE(t.label, ''), COALESCE(t.scopes_json, ''), t.revoked_at,
+			u.name, u.email, u.is_superadmin,
+			COALESCE(ur.role, ''), COALESCE(ur.app_version, '')
+		FROM chatgpt_plugin_tokens t
+		JOIN bo_users u ON u.id = t.user_id
+		LEFT JOIN bo_user_restaurants ur
+			ON ur.user_id = t.user_id AND ur.restaurant_id = t.restaurant_id
+		WHERE app.norm_ascii(t.token_hash) = app.norm_ascii(?)
+		LIMIT 1
+	`), tokenSHA).Scan(
 		&row.ID, &row.UserID, &row.RestaurantID, &row.TokenHash,
 		&row.Label, &row.Scopes, &row.RevokedAt,
 		&row.UserName, &row.UserEmail, &row.IsSuperadmin,
@@ -179,7 +195,7 @@ func (s *Server) resolveChatGPTPluginToken(ctx context.Context, token string) (b
 
 	// Best-effort usage stamp. A failure here must never fail the request, so
 	// it is deliberately ignored.
-	_, _ = s.db.ExecContext(ctx, `UPDATE chatgpt_plugin_tokens SET last_used_at = NOW() WHERE id = ?`, row.ID)
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE chatgpt_plugin_tokens SET last_used_at = NOW() WHERE id = ?`, `UPDATE chatgpt_plugin_tokens SET last_used_at = date_trunc('second', statement_timestamp()) WHERE id = ?`), row.ID)
 
 	// Advisory scopes are attached for auditing/observability only. They never
 	// widen access: the RBAC role above is the sole authorization source.

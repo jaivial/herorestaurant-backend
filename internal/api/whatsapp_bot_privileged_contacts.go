@@ -97,9 +97,11 @@ func (s *Server) botSavePrivilegedContacts(ctx context.Context, restaurantID int
 	// Read the stored config, change only the privileged contacts, write it
 	// back.
 	var current sql.NullString
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	`, `
+		SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`), restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	tenant := parseBotTenantConfig(current.String)
@@ -108,10 +110,13 @@ func (s *Server) botSavePrivilegedContacts(ctx context.Context, restaurantID int
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, restaurantID, string(merged)); err != nil {
+	`, `
+		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id) DO UPDATE SET config_json = EXCLUDED.config_json
+	`), restaurantID, string(merged)); err != nil {
 		return err
 	}
 	// The service session is bound to the restaurant, not to the selection,
@@ -199,9 +204,11 @@ func (s *Server) botStoredPrivilegedContacts(ctx context.Context, restaurantID i
 		return nil
 	}
 	var current sql.NullString
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	`, `
+		SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`), restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	return botPrivilegedContactsFromConfig(parseBotTenantConfig(current.String))

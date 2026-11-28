@@ -36,7 +36,7 @@ func (s *Server) handleGetConversationState(w http.ResponseWriter, r *http.Reque
 		updatedAt  sql.NullTime
 		expiresAt  sql.NullTime
 	)
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT conversation_state, context_data, created_at, updated_at, expires_at
 		FROM conversation_states
 		WHERE restaurant_id = ?
@@ -44,7 +44,15 @@ func (s *Server) handleGetConversationState(w http.ResponseWriter, r *http.Reque
 		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY updated_at DESC
 		LIMIT 1
-	`, restaurantID, sender).Scan(&stateRaw, &contextRaw, &createdAt, &updatedAt, &expiresAt)
+	`, `
+		SELECT conversation_state, context_data, created_at, updated_at, expires_at
+		FROM conversation_states
+		WHERE restaurant_id = ?
+		  AND sender_number = ?
+		  AND (expires_at IS NULL OR expires_at > date_trunc('second', statement_timestamp()))
+		ORDER BY updated_at DESC NULLS LAST
+		LIMIT 1
+	`), restaurantID, sender).Scan(&stateRaw, &contextRaw, &createdAt, &updatedAt, &expiresAt)
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":     true,
@@ -144,7 +152,7 @@ func (s *Server) handleSaveConversationState(w http.ResponseWriter, r *http.Requ
 	}
 
 	var existingID int
-	err := s.db.QueryRowContext(r.Context(), "SELECT id FROM conversation_states WHERE restaurant_id = ? AND sender_number = ? LIMIT 1", restaurantID, sender).Scan(&existingID)
+	err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT id FROM conversation_states WHERE restaurant_id = ? AND sender_number = ? LIMIT 1"), restaurantID, sender).Scan(&existingID)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -156,7 +164,7 @@ func (s *Server) handleSaveConversationState(w http.ResponseWriter, r *http.Requ
 
 	msg := "Conversation state created successfully"
 	if err == nil {
-		_, err = s.db.ExecContext(r.Context(), `
+		_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 			UPDATE conversation_states
 			SET conversation_state = ?,
 			    context_data = ?,
@@ -164,13 +172,21 @@ func (s *Server) handleSaveConversationState(w http.ResponseWriter, r *http.Requ
 			    updated_at = NOW()
 			WHERE restaurant_id = ?
 			  AND sender_number = ?
-		`, state, contextJSON, expiresAt, restaurantID, sender)
+		`, `
+			UPDATE conversation_states
+			SET conversation_state = ?,
+			    context_data = ?,
+			    expires_at = ?,
+			    updated_at = date_trunc('second', statement_timestamp())
+			WHERE restaurant_id = ?
+			  AND sender_number = ?
+		`), state, contextJSON, expiresAt, restaurantID, sender)
 		msg = "Conversation state updated successfully"
 	} else {
-		_, err = s.db.ExecContext(r.Context(), `
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`
 			INSERT INTO conversation_states (restaurant_id, sender_number, conversation_state, context_data, expires_at)
 			VALUES (?, ?, ?, ?, ?)
-		`, restaurantID, sender, state, contextJSON, expiresAt)
+		`), restaurantID, sender, state, contextJSON, expiresAt)
 	}
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{

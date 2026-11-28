@@ -143,7 +143,9 @@ func botConfigDayBefore(ctx context.Context, q interface {
 	if forUpdate {
 		lock = " FOR UPDATE"
 	}
-	rows, err := q.QueryContext(ctx, "SELECT date, is_open FROM restaurant_days WHERE restaurant_id = ? AND date IN ("+strings.Join(ph, ",")+")"+lock, args...)
+	// q: s.db (propose, forUpdate=false) or claim tx (execute, true). PG
+	// FOR UPDATE locks existing rows only; MySQL RR also gap-locks absent dates.
+	rows, err := q.QueryContext(ctx, portableSQL("SELECT date, is_open FROM restaurant_days WHERE restaurant_id = ? AND date IN ("+strings.Join(ph, ",")+")"+lock), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +169,7 @@ func botConfigDailyLimitBefore(ctx context.Context, q interface {
 	if forUpdate {
 		lock = " FOR UPDATE"
 	}
-	rows, err := q.QueryContext(ctx, "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id"+lock, rid, date)
+	rows, err := q.QueryContext(ctx, portableSQL(sqlFragment("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id", `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? ORDER BY id`)+lock), rid, date)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +192,8 @@ func botConfigMesasBefore(ctx context.Context, q interface {
 	if forUpdate {
 		lock = " FOR UPDATE"
 	}
-	err := q.QueryRowContext(ctx, "SELECT dailyLimit FROM "+table+" WHERE restaurant_id = ? AND reservationDate = ?"+lock, rid, date).Scan(&v)
+	// table is fixed by botConfigMesasTable (mesas_de_dos / mesas_de_tres).
+	err := q.QueryRowContext(ctx, portableSQL(sqlFragment("SELECT dailyLimit FROM "+table+" WHERE restaurant_id = ? AND reservationDate = ?", `SELECT "dailyLimit" FROM `+table+` WHERE restaurant_id = ? AND "reservationDate" = ?`)+lock), rid, date).Scan(&v)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -208,7 +211,7 @@ func botConfigSalonCondesaBefore(ctx context.Context, q interface {
 	if forUpdate {
 		lock = " FOR UPDATE"
 	}
-	err := q.QueryRowContext(ctx, "SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ?"+lock, rid, date).Scan(&v)
+	err := q.QueryRowContext(ctx, portableSQL("SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ?"+lock), rid, date).Scan(&v)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -318,8 +321,10 @@ func (s *Server) botConfigDayExecute(ctx context.Context, tx *sql.Tx, rid int, m
 		placeholders = append(placeholders, "(?, ?, ?)")
 		args = append(args, rid, d, isOpenInt)
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES "+
-		strings.Join(placeholders, ", ")+" ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)", args...); err != nil {
+	// dates are deduped by botConfigValidateDates, so PG ON CONFLICT never
+	// touches a row twice in one statement; single collidable key uniq(restaurant_id,date).
+	if _, err := tx.ExecContext(ctx, portableSQL("INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES "+
+		strings.Join(placeholders, ", ")+sqlFragment(" ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)", " ON CONFLICT (restaurant_id, date) DO UPDATE SET is_open = EXCLUDED.is_open")), args...); err != nil {
 		return "", errors.New("no se pudo actualizar restaurant_days; no se aplicó nada")
 	}
 	// Post-write verification inside the TX: the rows now read back exactly
@@ -337,7 +342,7 @@ func (s *Server) botConfigDayExecute(ctx context.Context, tx *sql.Tx, rid int, m
 	}
 	notice := fmt.Sprintf("Reservas %s para %d fecha(s): %s.", estado, len(dates), strings.Join(dates, ", "))
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "dates": dates, "is_open": *in.IsOpen, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "dates": dates, "is_open": *in.IsOpen, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -437,12 +442,17 @@ func (s *Server) botConfigDailyLimitExecute(ctx context.Context, tx *sql.Tx, rid
 	if botConfigDailyLimitAfterKey(rid, date, in.Limit) != p.After {
 		return stale("los datos resueltos cambiaron desde la vista previa; pide una propuesta nueva")
 	}
+	// booking_day_lock_v1: a limit change waits for in-flight day writers
+	// (and they for it), so no booking is checked against a stale limit.
+	if err := lockBookingDays(ctx, tx, rid, date); err != nil {
+		return "", errors.New("no se pudo bloquear el día; no se aplicó nada")
+	}
 	// Same write as handleBOConfigDailyLimitSet (DELETE+INSERT) but atomic
 	// inside the claim transaction.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ?", rid, date); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL("DELETE FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ?", `DELETE FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ?`), rid, date); err != nil {
 		return "", errors.New("no se pudo actualizar reservation_manager; no se aplicó nada")
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO reservation_manager (restaurant_id, reservationDate, dailyLimit) VALUES (?, ?, ?)", rid, date, in.Limit); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL("INSERT INTO reservation_manager (restaurant_id, reservationDate, dailyLimit) VALUES (?, ?, ?)", `INSERT INTO reservation_manager (restaurant_id, "reservationDate", "dailyLimit") VALUES (?, ?, ?)`), rid, date, in.Limit); err != nil {
 		return "", errors.New("no se pudo actualizar reservation_manager; no se aplicó nada")
 	}
 	back, berr := botConfigDailyLimitBefore(ctx, tx, rid, date, false)
@@ -451,7 +461,7 @@ func (s *Server) botConfigDailyLimitExecute(ctx context.Context, tx *sql.Tx, rid
 	}
 	notice := fmt.Sprintf("Límite de comensales del día %s fijado en %d.", date, in.Limit)
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "date": date, "limit": in.Limit, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "date": date, "limit": in.Limit, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -570,7 +580,8 @@ func (s *Server) botConfigMesasExecute(ctx context.Context, tx *sql.Tx, rid int,
 		return stale("los datos resueltos cambiaron desde la vista previa; pide una propuesta nueva")
 	}
 	// Same upsert as the panel handlers.
-	if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (restaurant_id, reservationDate, dailyLimit) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE dailyLimit = VALUES(dailyLimit)", rid, date, limit); err != nil {
+	// Single collidable key uniq_<table>_restaurant_date(restaurant_id, reservationDate).
+	if _, err := tx.ExecContext(ctx, portableSQL(sqlFragment("INSERT INTO "+table+" (restaurant_id, reservationDate, dailyLimit) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE dailyLimit = VALUES(dailyLimit)", "INSERT INTO "+table+` (restaurant_id, "reservationDate", "dailyLimit") VALUES (?, ?, ?) ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET "dailyLimit" = EXCLUDED."dailyLimit"`)), rid, date, limit); err != nil {
 		return "", errors.New("no se pudo actualizar " + table + "; no se aplicó nada")
 	}
 	back, berr := botConfigMesasBefore(ctx, tx, rid, table, date, false)
@@ -583,7 +594,7 @@ func (s *Server) botConfigMesasExecute(ctx context.Context, tx *sql.Tx, rid int,
 	}
 	notice := fmt.Sprintf("Límite diario de %s para el %s fijado en %s.", label, date, shown)
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "table": table, "date": date, "limit": limit, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "table": table, "date": date, "limit": limit, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -683,7 +694,7 @@ func (s *Server) botConfigSalonCondesaExecute(ctx context.Context, tx *sql.Tx, r
 		stateInt = 1
 	}
 	// Same upsert as handleBOConfigSalonCondesaSet.
-	if _, err := tx.ExecContext(ctx, "INSERT INTO salon_condesa (restaurant_id, date, state) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE state = VALUES(state)", rid, date, stateInt); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL("INSERT INTO salon_condesa (restaurant_id, date, state) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE state = VALUES(state)", "INSERT INTO salon_condesa (restaurant_id, date, state) VALUES (?, ?, ?) ON CONFLICT (restaurant_id, date) DO UPDATE SET state = EXCLUDED.state"), rid, date, stateInt); err != nil {
 		return "", errors.New("no se pudo actualizar salon_condesa; no se aplicó nada")
 	}
 	back, berr := botConfigSalonCondesaBefore(ctx, tx, rid, date, false)
@@ -696,7 +707,7 @@ func (s *Server) botConfigSalonCondesaExecute(ctx context.Context, tx *sql.Tx, r
 	}
 	notice := fmt.Sprintf("Salón condesa %s para el %s.", estado, date)
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "date": date, "state": *in.State, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "date": date, "state": *in.State, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})

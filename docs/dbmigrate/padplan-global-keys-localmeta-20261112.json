@@ -1,0 +1,126 @@
+{
+  "applied": false,
+  "source": "DERIVED: local restored source information_schema.COLLATIONS@8.0.45 (coordinator 2026-11-12 07:16 CET) merged onto archived schema sha256 4cbbdea14083fd075802cd6676fb6a542500440c41974803ec50ccc416578830; not a new export/proof",
+  "proposals": [
+    {
+      "table": "restaurant_domains",
+      "index": "uniq_restaurant_domains_domain",
+      "pg_index_name": "ixpad__restaurant_domains__uniq_restaurant_domains_domain",
+      "parts": [
+        {
+          "column": "domain",
+          "expression": "(rtrim(\"domain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "source_charset": "utf8mb4",
+          "pad_attribute": "PAD SPACE",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "proposed_ddl": "CREATE UNIQUE INDEX \"ixpad__restaurant_domains__uniq_restaurant_domains_domain\" ON \"restaurant_domains\" ((rtrim(\"domain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\")",
+      "status": "proposed_gated",
+      "gates": [
+        "ci_ai_approximates_utf8mb4_unicode_ci_expansions_unresolved:domain",
+        "caller_compat_pending: every ON CONFLICT target, unique-error name and equality reader must use the identical expression (docs/dbmigrate/padding-index-callers.tsv)",
+        "replaces_r5_raw_unique_only_after_review: not merged into plan.sql"
+      ]
+    },
+    {
+      "table": "restaurant_uazapi_instances",
+      "index": "uniq_restaurant_uazapi_instances_name",
+      "pg_index_name": "ixpad__restaurant_uazapi_instances__uniq_restaurant_ua_96a63182",
+      "parts": [
+        {
+          "column": "instance_name",
+          "expression": "(rtrim(\"instance_name\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "source_charset": "utf8mb4",
+          "pad_attribute": "PAD SPACE",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "proposed_ddl": "CREATE UNIQUE INDEX \"ixpad__restaurant_uazapi_instances__uniq_restaurant_ua_96a63182\" ON \"restaurant_uazapi_instances\" ((rtrim(\"instance_name\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\")",
+      "status": "proposed_gated",
+      "gates": [
+        "ci_ai_approximates_utf8mb4_unicode_ci_expansions_unresolved:instance_name",
+        "caller_compat_pending: every ON CONFLICT target, unique-error name and equality reader must use the identical expression (docs/dbmigrate/padding-index-callers.tsv)",
+        "replaces_r5_raw_unique_only_after_review: not merged into plan.sql"
+      ]
+    },
+    {
+      "table": "site_builder_domain_mappings",
+      "index": "uk_domain",
+      "pg_index_name": "ixpad__site_builder_domain_mappings__uk_domain",
+      "parts": [
+        {
+          "column": "domain",
+          "expression": "(rtrim(\"domain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "source_charset": "utf8mb4",
+          "pad_attribute": "PAD SPACE",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "proposed_ddl": "CREATE UNIQUE INDEX \"ixpad__site_builder_domain_mappings__uk_domain\" ON \"site_builder_domain_mappings\" ((rtrim(\"domain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\")",
+      "status": "proposed_gated",
+      "gates": [
+        "ci_ai_approximates_utf8mb4_unicode_ci_expansions_unresolved:domain",
+        "caller_compat_pending: every ON CONFLICT target, unique-error name and equality reader must use the identical expression (docs/dbmigrate/padding-index-callers.tsv)",
+        "replaces_r5_raw_unique_only_after_review: not merged into plan.sql"
+      ]
+    },
+    {
+      "table": "site_builder_sites",
+      "index": "uk_custom_domain",
+      "pg_index_name": "ixpad__site_builder_sites__uk_custom_domain",
+      "parts": [
+        {
+          "column": "custom_domain",
+          "expression": "(rtrim(\"custom_domain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "source_charset": "utf8mb4",
+          "pad_attribute": "PAD SPACE",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "proposed_ddl": "CREATE UNIQUE INDEX \"ixpad__site_builder_sites__uk_custom_domain\" ON \"site_builder_sites\" ((rtrim(\"custom_domain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\")",
+      "status": "proposed_gated",
+      "gates": [
+        "ci_ai_approximates_utf8mb4_unicode_ci_expansions_unresolved:custom_domain",
+        "caller_compat_pending: every ON CONFLICT target, unique-error name and equality reader must use the identical expression (docs/dbmigrate/padding-index-callers.tsv)",
+        "replaces_r5_raw_unique_only_after_review: not merged into plan.sql"
+      ]
+    },
+    {
+      "table": "site_builder_sites",
+      "index": "uk_subdomain",
+      "pg_index_name": "ixpad__site_builder_sites__uk_subdomain",
+      "parts": [
+        {
+          "column": "subdomain",
+          "expression": "(rtrim(\"subdomain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "source_charset": "utf8mb4",
+          "pad_attribute": "PAD SPACE",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "proposed_ddl": "CREATE UNIQUE INDEX \"ixpad__site_builder_sites__uk_subdomain\" ON \"site_builder_sites\" ((rtrim(\"subdomain\", ' ')) COLLATE \"dbmigrate\".\"ci_ai\")",
+      "status": "proposed_gated",
+      "gates": [
+        "ci_ai_approximates_utf8mb4_unicode_ci_expansions_unresolved:subdomain",
+        "caller_compat_pending: every ON CONFLICT target, unique-error name and equality reader must use the identical expression (docs/dbmigrate/padding-index-callers.tsv)",
+        "replaces_r5_raw_unique_only_after_review: not merged into plan.sql"
+      ]
+    }
+  ]
+}

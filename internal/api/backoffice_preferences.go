@@ -133,7 +133,7 @@ func normalizeBOPreference(key, value string) (string, bool) {
 // Missing rows yield an empty (non-nil) map so JSON serializes to {}.
 func (s *Server) getUserPreferences(ctx context.Context, userID, restaurantID int) (map[string]string, error) {
 	prefs := map[string]string{}
-	rows, err := s.db.QueryContext(ctx, `SELECT pref_key, pref_value FROM user_preferences WHERE user_id = ? AND restaurant_id = ?`, userID, restaurantID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT pref_key, pref_value FROM user_preferences WHERE user_id = ? AND restaurant_id = ?`), userID, restaurantID)
 	if err != nil {
 		return prefs, err
 	}
@@ -151,11 +151,15 @@ func (s *Server) getUserPreferences(ctx context.Context, userID, restaurantID in
 // setUserPreference upserts a single preference for (userID, restaurantID).
 // The caller is responsible for validating key/value via normalizeBOPreference.
 func (s *Server) setUserPreference(ctx context.Context, userID, restaurantID int, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO user_preferences (user_id, restaurant_id, pref_key, pref_value)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE pref_value = VALUES(pref_value)
-	`, userID, restaurantID, key, value)
+	`, `
+		INSERT INTO user_preferences (user_id, restaurant_id, pref_key, pref_value)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (user_id, restaurant_id, app.norm_ascii(pref_key)) DO UPDATE SET pref_value = EXCLUDED.pref_value
+	`), userID, restaurantID, key, value)
 	return err
 }
 
@@ -168,9 +172,8 @@ func (s *Server) setUserPreference(ctx context.Context, userID, restaurantID int
 func (s *Server) getUserPreference(ctx context.Context, userID, restaurantID int, key string) (string, bool, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT pref_value FROM user_preferences WHERE user_id = ? AND restaurant_id = ? AND pref_key = ?`,
-		userID, restaurantID, key,
-	).Scan(&value)
+		nativeSQL(`SELECT pref_value FROM user_preferences WHERE user_id = ? AND restaurant_id = ? AND pref_key = ?`, `SELECT pref_value FROM user_preferences WHERE user_id = ? AND restaurant_id = ? AND app.norm_ascii(pref_key) = app.norm_ascii(?)`),
+		userID, restaurantID, key).Scan(&value)
 	switch {
 	case err == nil:
 		return value, true, nil
@@ -186,11 +189,15 @@ func (s *Server) getUserPreference(ctx context.Context, userID, restaurantID int
 // editor/preview split is remembered for each menu id, whatever its type.
 // Coordination id: menu_editor_preview_open_v1
 func (s *Server) setMenuUserPreference(ctx context.Context, userID, restaurantID int, menuID int64, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO user_menu_preferences (user_id, restaurant_id, menu_id, pref_key, pref_value)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE pref_value = VALUES(pref_value)
-	`, userID, restaurantID, menuID, key, value)
+	`, `
+		INSERT INTO user_menu_preferences (user_id, restaurant_id, menu_id, pref_key, pref_value)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, restaurant_id, menu_id, app.norm_ascii(pref_key)) DO UPDATE SET pref_value = EXCLUDED.pref_value
+	`), userID, restaurantID, menuID, key, value)
 	return err
 }
 
@@ -201,9 +208,8 @@ func (s *Server) setMenuUserPreference(ctx context.Context, userID, restaurantID
 func (s *Server) getMenuUserPreference(ctx context.Context, userID, restaurantID int, menuID int64, key string) (string, bool, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT pref_value FROM user_menu_preferences WHERE user_id = ? AND restaurant_id = ? AND menu_id = ? AND pref_key = ?`,
-		userID, restaurantID, menuID, key,
-	).Scan(&value)
+		nativeSQL(`SELECT pref_value FROM user_menu_preferences WHERE user_id = ? AND restaurant_id = ? AND menu_id = ? AND pref_key = ?`, `SELECT pref_value FROM user_menu_preferences WHERE user_id = ? AND restaurant_id = ? AND menu_id = ? AND app.norm_ascii(pref_key) = app.norm_ascii(?)`),
+		userID, restaurantID, menuID, key).Scan(&value)
 	switch {
 	case err == nil:
 		return value, true, nil

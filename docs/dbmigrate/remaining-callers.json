@@ -1,0 +1,4907 @@
+{
+  "generated": "sql-inventory-r5 (go/ast, non-test)",
+  "total_sites": 2472,
+  "static": 2144,
+  "dynamic": 328,
+  "by_domain": [
+    {
+      "domain": "pos_billing",
+      "files": 35,
+      "sites": 564,
+      "dynamic": 53,
+      "categories": {
+        "cast_mysql": 2,
+        "collate": 2,
+        "concat": 2,
+        "date_arith": 2,
+        "date_format": 5,
+        "for_update": 42,
+        "group_by": 13,
+        "if_ifnull": 2,
+        "insert_ignore": 10,
+        "json_func": 24,
+        "like": 3,
+        "now_curdate": 37,
+        "upsert_on_duplicate": 17
+      }
+    },
+    {
+      "domain": "catalog_stock",
+      "files": 43,
+      "sites": 506,
+      "dynamic": 90,
+      "categories": {
+        "concat": 1,
+        "date_arith": 7,
+        "date_format": 6,
+        "find_in_set_field": 1,
+        "for_update": 14,
+        "group_by": 13,
+        "group_concat": 1,
+        "if_ifnull": 5,
+        "insert_ignore": 1,
+        "json_func": 5,
+        "like": 3,
+        "limit_offset_comma": 1,
+        "now_curdate": 12,
+        "timestampdiff": 2,
+        "upsert_on_duplicate": 22
+      }
+    },
+    {
+      "domain": "core_backoffice",
+      "files": 63,
+      "sites": 403,
+      "dynamic": 27,
+      "categories": {
+        "cast_mysql": 1,
+        "collate": 1,
+        "concat": 8,
+        "date_arith": 2,
+        "date_format": 12,
+        "for_update": 9,
+        "group_by": 9,
+        "if_ifnull": 1,
+        "insert_ignore": 5,
+        "json_func": 4,
+        "like": 2,
+        "now_curdate": 24,
+        "upsert_on_duplicate": 34
+      }
+    },
+    {
+      "domain": "whatsapp_bot",
+      "files": 53,
+      "sites": 315,
+      "dynamic": 52,
+      "categories": {
+        "backtick": 4,
+        "concat": 9,
+        "date_arith": 6,
+        "date_format": 27,
+        "for_update": 6,
+        "group_by": 4,
+        "if_ifnull": 2,
+        "insert_ignore": 3,
+        "json_func": 1,
+        "like": 1,
+        "limit_offset_comma": 1,
+        "now_curdate": 40,
+        "timestampdiff": 1,
+        "upsert_on_duplicate": 13
+      }
+    },
+    {
+      "domain": "site_analytics",
+      "files": 17,
+      "sites": 200,
+      "dynamic": 21,
+      "categories": {
+        "concat": 1,
+        "for_update": 1,
+        "group_by": 9,
+        "if_ifnull": 1,
+        "json_func": 7,
+        "limit_offset_comma": 2,
+        "now_curdate": 5,
+        "timestampdiff": 2,
+        "upsert_on_duplicate": 12
+      }
+    },
+    {
+      "domain": "bookings",
+      "files": 24,
+      "sites": 160,
+      "dynamic": 12,
+      "categories": {
+        "concat": 3,
+        "date_format": 17,
+        "group_by": 3,
+        "if_ifnull": 3,
+        "insert_ignore": 2,
+        "limit_offset_comma": 2,
+        "now_curdate": 11,
+        "upsert_on_duplicate": 7
+      }
+    },
+    {
+      "domain": "members_staff",
+      "files": 7,
+      "sites": 84,
+      "dynamic": 1,
+      "categories": {
+        "concat": 13,
+        "date_format": 12,
+        "group_by": 5,
+        "insert_ignore": 1,
+        "now_curdate": 11,
+        "timestampdiff": 4,
+        "upsert_on_duplicate": 4
+      }
+    },
+    {
+      "domain": "campaigns_messaging",
+      "files": 7,
+      "sites": 64,
+      "dynamic": 5,
+      "categories": {
+        "collate": 1,
+        "concat": 2,
+        "date_arith": 7,
+        "date_format": 3,
+        "group_by": 2,
+        "if_ifnull": 1,
+        "insert_ignore": 5,
+        "like": 3,
+        "now_curdate": 11,
+        "regexp": 1,
+        "upsert_on_duplicate": 1
+      }
+    },
+    {
+      "domain": "migration_tooling_native",
+      "files": 7,
+      "sites": 59,
+      "dynamic": 34,
+      "categories": {
+        "information_schema": 1,
+        "now_curdate": 1
+      }
+    },
+    {
+      "domain": "tools_cmd",
+      "files": 12,
+      "sites": 57,
+      "dynamic": 9,
+      "categories": {
+        "concat": 1,
+        "information_schema": 2,
+        "like": 2,
+        "locks": 6,
+        "now_curdate": 7,
+        "upsert_on_duplicate": 2
+      }
+    },
+    {
+      "domain": "assistant",
+      "files": 8,
+      "sites": 55,
+      "dynamic": 22,
+      "categories": {
+        "concat": 1,
+        "date_format": 1,
+        "group_by": 2,
+        "information_schema": 1,
+        "now_curdate": 4,
+        "upsert_on_duplicate": 2
+      }
+    },
+    {
+      "domain": "db_runner",
+      "files": 2,
+      "sites": 5,
+      "dynamic": 2,
+      "categories": {
+        "collate": 1
+      }
+    }
+  ],
+  "files": [
+    {
+      "file": "cmd/backfill-translations/main.go",
+      "domain": "tools_cmd",
+      "sites": 9,
+      "dynamic": 2,
+      "lines": [
+        90,
+        118,
+        152,
+        174,
+        216,
+        242,
+        345,
+        361,
+        395
+      ]
+    },
+    {
+      "file": "cmd/botstore-migrate/main.go",
+      "domain": "tools_cmd",
+      "sites": 2,
+      "dynamic": 1,
+      "lines": [
+        188,
+        283
+      ]
+    },
+    {
+      "file": "cmd/cdn-sweep/main.go",
+      "domain": "tools_cmd",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        49,
+        53,
+        131,
+        146,
+        158
+      ]
+    },
+    {
+      "file": "cmd/cdn-sweep/registry.go",
+      "domain": "tools_cmd",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        91,
+        121,
+        132
+      ]
+    },
+    {
+      "file": "cmd/chatgpt-plugin-token/main.go",
+      "domain": "tools_cmd",
+      "sites": 1,
+      "dynamic": 1,
+      "lines": [
+        108
+      ]
+    },
+    {
+      "file": "cmd/comida-stock-backfill/main.go",
+      "domain": "tools_cmd",
+      "sites": 8,
+      "dynamic": 2,
+      "lines": [
+        69,
+        74,
+        105,
+        135,
+        199,
+        202,
+        214,
+        227
+      ]
+    },
+    {
+      "file": "cmd/dbmigrate/main.go",
+      "domain": "tools_cmd",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        200
+      ]
+    },
+    {
+      "file": "cmd/group-menu-arroz-cleanup/main.go",
+      "domain": "tools_cmd",
+      "sites": 5,
+      "dynamic": 1,
+      "lines": [
+        193,
+        234,
+        329,
+        345,
+        383
+      ]
+    },
+    {
+      "file": "cmd/migrate-wine-images/main.go",
+      "domain": "tools_cmd",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        79,
+        165,
+        168
+      ]
+    },
+    {
+      "file": "cmd/ops-check/main.go",
+      "domain": "tools_cmd",
+      "sites": 15,
+      "dynamic": 1,
+      "lines": [
+        47,
+        51,
+        52,
+        94,
+        110,
+        153,
+        161,
+        169,
+        176,
+        182,
+        188,
+        191,
+        198,
+        225,
+        226
+      ]
+    },
+    {
+      "file": "cmd/seed-legal-pages/main.go",
+      "domain": "tools_cmd",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        72
+      ]
+    },
+    {
+      "file": "cmd/update-restaurant-info/main.go",
+      "domain": "tools_cmd",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        61,
+        62,
+        65,
+        90
+      ]
+    },
+    {
+      "file": "internal/analytics/breakdowns.go",
+      "domain": "site_analytics",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        112,
+        153,
+        188,
+        213,
+        263,
+        312
+      ]
+    },
+    {
+      "file": "internal/analytics/service.go",
+      "domain": "site_analytics",
+      "sites": 27,
+      "dynamic": 0,
+      "lines": [
+        375,
+        403,
+        409,
+        412,
+        417,
+        443,
+        452,
+        456,
+        512,
+        547,
+        597,
+        647,
+        662,
+        667,
+        680,
+        689,
+        694,
+        705,
+        760,
+        811,
+        864,
+        883,
+        910,
+        947,
+        1027,
+        1182,
+        1216
+      ]
+    },
+    {
+      "file": "internal/api/ad_tools.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        167,
+        443,
+        448,
+        572,
+        599,
+        608,
+        730,
+        733
+      ]
+    },
+    {
+      "file": "internal/api/admin_menus.go",
+      "domain": "catalog_stock",
+      "sites": 8,
+      "dynamic": 5,
+      "lines": [
+        56,
+        107,
+        142,
+        188,
+        258,
+        271,
+        364,
+        428
+      ]
+    },
+    {
+      "file": "internal/api/admin_postres.go",
+      "domain": "pos_billing",
+      "sites": 9,
+      "dynamic": 0,
+      "lines": [
+        99,
+        109,
+        188,
+        200,
+        246,
+        287,
+        340,
+        381,
+        415
+      ]
+    },
+    {
+      "file": "internal/api/admin_vinos.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "dynamic": 5,
+      "lines": [
+        75,
+        151,
+        172,
+        185,
+        276
+      ]
+    },
+    {
+      "file": "internal/api/ai_usage_logging.go",
+      "domain": "site_analytics",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        34
+      ]
+    },
+    {
+      "file": "internal/api/assistant_analytics_tools.go",
+      "domain": "assistant",
+      "sites": 4,
+      "dynamic": 3,
+      "lines": [
+        24,
+        50,
+        66,
+        101
+      ]
+    },
+    {
+      "file": "internal/api/assistant_catalog_tools.go",
+      "domain": "assistant",
+      "sites": 15,
+      "dynamic": 14,
+      "lines": [
+        96,
+        129,
+        147,
+        149,
+        165,
+        167,
+        181,
+        224,
+        247,
+        295,
+        324,
+        360,
+        374,
+        441,
+        485
+      ]
+    },
+    {
+      "file": "internal/api/assistant_confirmation.go",
+      "domain": "assistant",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        45,
+        46,
+        66,
+        104
+      ]
+    },
+    {
+      "file": "internal/api/assistant_llm.go",
+      "domain": "assistant",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        699
+      ]
+    },
+    {
+      "file": "internal/api/assistant_memory.go",
+      "domain": "assistant",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        107,
+        115,
+        123,
+        136
+      ]
+    },
+    {
+      "file": "internal/api/assistant_pos_tools.go",
+      "domain": "assistant",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        45,
+        56,
+        59,
+        70,
+        80
+      ]
+    },
+    {
+      "file": "internal/api/assistant_tools.go",
+      "domain": "assistant",
+      "sites": 12,
+      "dynamic": 5,
+      "lines": [
+        57,
+        80,
+        111,
+        120,
+        134,
+        163,
+        203,
+        220,
+        261,
+        297,
+        373,
+        384
+      ]
+    },
+    {
+      "file": "internal/api/assistant_ws.go",
+      "domain": "assistant",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        247,
+        287,
+        289,
+        301,
+        308,
+        321,
+        387,
+        418,
+        444,
+        553
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_accounting_exports.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 1,
+      "lines": [
+        144,
+        191,
+        225,
+        265,
+        335
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_ads.go",
+      "domain": "site_analytics",
+      "sites": 9,
+      "dynamic": 2,
+      "lines": [
+        510,
+        618,
+        625,
+        699,
+        712,
+        796,
+        818,
+        846,
+        874
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_affluence.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        198,
+        239,
+        429
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_ai_usage.go",
+      "domain": "site_analytics",
+      "sites": 7,
+      "dynamic": 4,
+      "lines": [
+        167,
+        179,
+        197,
+        218,
+        283,
+        296,
+        317
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_auth.go",
+      "domain": "core_backoffice",
+      "sites": 14,
+      "dynamic": 0,
+      "lines": [
+        90,
+        178,
+        216,
+        266,
+        364,
+        373,
+        382,
+        437,
+        489,
+        499,
+        511,
+        525,
+        527,
+        565
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_booking_documents_ws.go",
+      "domain": "bookings",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        308
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_booking_mutations.go",
+      "domain": "bookings",
+      "sites": 11,
+      "dynamic": 0,
+      "lines": [
+        601,
+        1047,
+        1066,
+        1142,
+        1204,
+        1347,
+        1597,
+        1655,
+        1668,
+        1678,
+        1702
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_bookings.go",
+      "domain": "bookings",
+      "sites": 11,
+      "dynamic": 2,
+      "lines": [
+        278,
+        320,
+        460,
+        506,
+        543,
+        635,
+        743,
+        862,
+        897,
+        903,
+        917
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_bookings_search.go",
+      "domain": "bookings",
+      "sites": 2,
+      "dynamic": 2,
+      "lines": [
+        55,
+        100
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_branding_logo.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        94,
+        113
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_calendar.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        96,
+        131,
+        162
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_campaigns.go",
+      "domain": "campaigns_messaging",
+      "sites": 29,
+      "dynamic": 5,
+      "lines": [
+        277,
+        288,
+        306,
+        364,
+        405,
+        432,
+        436,
+        689,
+        769,
+        798,
+        990,
+        1186,
+        1199,
+        1241,
+        1262,
+        1282,
+        1306,
+        1312,
+        1335,
+        1337,
+        1342,
+        1407,
+        1431,
+        1439,
+        1454,
+        1496,
+        1580,
+        1584,
+        1594
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_comida_ai.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        323,
+        332,
+        588,
+        612
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_comida_categories.go",
+      "domain": "catalog_stock",
+      "sites": 22,
+      "dynamic": 10,
+      "lines": [
+        309,
+        316,
+        367,
+        444,
+        519,
+        539,
+        575,
+        658,
+        738,
+        806,
+        831,
+        890,
+        920,
+        936,
+        984,
+        998,
+        1026,
+        1038,
+        1066,
+        1082,
+        1116,
+        1129
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_comida_counts.go",
+      "domain": "catalog_stock",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        21
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_comida_upload.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        48,
+        135
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_config.go",
+      "domain": "core_backoffice",
+      "sites": 43,
+      "dynamic": 1,
+      "lines": [
+        381,
+        466,
+        489,
+        500,
+        549,
+        581,
+        593,
+        616,
+        624,
+        639,
+        692,
+        722,
+        780,
+        862,
+        885,
+        934,
+        1011,
+        1057,
+        1125,
+        1168,
+        1236,
+        1279,
+        1330,
+        1380,
+        1396,
+        1446,
+        1447,
+        1735,
+        1746,
+        1774,
+        1785,
+        1918,
+        1923,
+        1957,
+        1963,
+        2126,
+        2299,
+        2357,
+        2444,
+        2478,
+        2580,
+        2761,
+        2771
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_config_ai_image.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        96,
+        108,
+        133,
+        157,
+        323,
+        350,
+        356,
+        404
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_config_bunny.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        155
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_config_chatgpt_plugin.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        41
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_config_minimax.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        75,
+        259,
+        265
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_dashboard.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        39,
+        59
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_dish_same_day_booking.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        34,
+        87,
+        100,
+        142,
+        159
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_fichaje.go",
+      "domain": "members_staff",
+      "sites": 27,
+      "dynamic": 1,
+      "lines": [
+        106,
+        307,
+        360,
+        482,
+        556,
+        635,
+        713,
+        878,
+        1021,
+        1094,
+        1158,
+        1167,
+        1315,
+        1347,
+        1467,
+        1522,
+        1587,
+        1807,
+        1830,
+        1863,
+        1908,
+        1926,
+        1975,
+        2005,
+        2048,
+        2079,
+        2168
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_fichaje_realtime.go",
+      "domain": "members_staff",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        17,
+        73,
+        130,
+        149
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_group_menus.go",
+      "domain": "catalog_stock",
+      "sites": 10,
+      "dynamic": 2,
+      "lines": [
+        34,
+        117,
+        138,
+        285,
+        395,
+        479,
+        511,
+        581,
+        598,
+        627
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2.go",
+      "domain": "catalog_stock",
+      "sites": 70,
+      "dynamic": 4,
+      "lines": [
+        174,
+        199,
+        284,
+        325,
+        347,
+        361,
+        391,
+        406,
+        448,
+        490,
+        589,
+        727,
+        840,
+        895,
+        1067,
+        1142,
+        1275,
+        1358,
+        1372,
+        1435,
+        1450,
+        1509,
+        1517,
+        1530,
+        1553,
+        1646,
+        1708,
+        1762,
+        1797,
+        1858,
+        1878,
+        1955,
+        2003,
+        2046,
+        2072,
+        2148,
+        2173,
+        2270,
+        2362,
+        2457,
+        2474,
+        2514,
+        2531,
+        2537,
+        2556,
+        2590,
+        2606,
+        2651,
+        2723,
+        2835,
+        2867,
+        2931,
+        2961,
+        3027,
+        3035,
+        3120,
+        3213,
+        3231,
+        3241,
+        3286,
+        3345,
+        3445,
+        3503,
+        3521,
+        3531,
+        3537,
+        3559,
+        3633,
+        3645,
+        3655
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_items.go",
+      "domain": "catalog_stock",
+      "sites": 8,
+      "dynamic": 1,
+      "lines": [
+        88,
+        102,
+        112,
+        121,
+        187,
+        261,
+        307,
+        359
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_special_sections.go",
+      "domain": "catalog_stock",
+      "sites": 19,
+      "dynamic": 4,
+      "lines": [
+        114,
+        121,
+        205,
+        280,
+        288,
+        356,
+        368,
+        468,
+        499,
+        546,
+        565,
+        622,
+        630,
+        706,
+        723,
+        745,
+        789,
+        813,
+        820
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_ws.go",
+      "domain": "catalog_stock",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        438,
+        532,
+        551,
+        698,
+        832,
+        933,
+        962,
+        1051,
+        1082,
+        2115
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_invoice_comments.go",
+      "domain": "pos_billing",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        43,
+        118,
+        131,
+        197,
+        219,
+        261
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_invoices.go",
+      "domain": "pos_billing",
+      "sites": 21,
+      "dynamic": 4,
+      "lines": [
+        296,
+        337,
+        367,
+        489,
+        593,
+        605,
+        634,
+        669,
+        745,
+        911,
+        916,
+        1263,
+        1265,
+        1377,
+        1381,
+        1397,
+        1427,
+        1449,
+        1451,
+        1501,
+        1561
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_invoices_billing.go",
+      "domain": "pos_billing",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        264,
+        268,
+        309,
+        328,
+        403
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_labour_cost.go",
+      "domain": "core_backoffice",
+      "sites": 12,
+      "dynamic": 0,
+      "lines": [
+        119,
+        139,
+        176,
+        199,
+        207,
+        218,
+        254,
+        258,
+        262,
+        286,
+        315,
+        348
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_manual_billing.go",
+      "domain": "pos_billing",
+      "sites": 4,
+      "dynamic": 1,
+      "lines": [
+        304,
+        324,
+        337,
+        402
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_member_access_flows.go",
+      "domain": "members_staff",
+      "sites": 34,
+      "dynamic": 0,
+      "lines": [
+        181,
+        193,
+        226,
+        236,
+        244,
+        347,
+        363,
+        409,
+        417,
+        428,
+        512,
+        549,
+        578,
+        596,
+        608,
+        626,
+        807,
+        830,
+        952,
+        962,
+        1058,
+        1103,
+        1178,
+        1249,
+        1258,
+        1439,
+        1524,
+        1607,
+        1616,
+        1634,
+        1667,
+        1820,
+        1838,
+        1847
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_members.go",
+      "domain": "members_staff",
+      "sites": 13,
+      "dynamic": 0,
+      "lines": [
+        85,
+        314,
+        336,
+        350,
+        396,
+        494,
+        515,
+        525,
+        537,
+        585,
+        1135,
+        1224,
+        1256
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_members_avatar.go",
+      "domain": "members_staff",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        130
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_menu_visibility.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        48,
+        65,
+        139,
+        151
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_menus.go",
+      "domain": "catalog_stock",
+      "sites": 6,
+      "dynamic": 6,
+      "lines": [
+        49,
+        165,
+        287,
+        340,
+        399,
+        411
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_middleware.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        61,
+        111
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_platform.go",
+      "domain": "core_backoffice",
+      "sites": 33,
+      "dynamic": 2,
+      "lines": [
+        86,
+        175,
+        276,
+        293,
+        300,
+        317,
+        347,
+        399,
+        467,
+        483,
+        541,
+        584,
+        589,
+        608,
+        641,
+        665,
+        690,
+        756,
+        782,
+        838,
+        867,
+        897,
+        957,
+        1060,
+        1061,
+        1062,
+        1063,
+        1064,
+        1065,
+        1066,
+        1067,
+        1070,
+        1115
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos.go",
+      "domain": "pos_billing",
+      "sites": 44,
+      "dynamic": 3,
+      "lines": [
+        69,
+        344,
+        359,
+        432,
+        442,
+        451,
+        457,
+        461,
+        471,
+        529,
+        575,
+        597,
+        645,
+        650,
+        670,
+        676,
+        706,
+        797,
+        804,
+        810,
+        824,
+        828,
+        846,
+        852,
+        874,
+        898,
+        938,
+        968,
+        971,
+        989,
+        1042,
+        1075,
+        1105,
+        1132,
+        1153,
+        1198,
+        1224,
+        1262,
+        1275,
+        1288,
+        1301,
+        1313,
+        1355,
+        1376
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_admin.go",
+      "domain": "pos_billing",
+      "sites": 13,
+      "dynamic": 2,
+      "lines": [
+        33,
+        81,
+        112,
+        131,
+        156,
+        157,
+        158,
+        159,
+        160,
+        173,
+        220,
+        250,
+        278
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash.go",
+      "domain": "pos_billing",
+      "sites": 25,
+      "dynamic": 8,
+      "lines": [
+        147,
+        166,
+        171,
+        185,
+        202,
+        238,
+        245,
+        248,
+        256,
+        259,
+        274,
+        307,
+        366,
+        388,
+        395,
+        398,
+        406,
+        419,
+        486,
+        495,
+        530,
+        533,
+        543,
+        548,
+        579
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash_days.go",
+      "domain": "pos_billing",
+      "sites": 18,
+      "dynamic": 1,
+      "lines": [
+        118,
+        129,
+        133,
+        140,
+        205,
+        342,
+        355,
+        359,
+        403,
+        430,
+        441,
+        447,
+        451,
+        485,
+        510,
+        525,
+        589,
+        599
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash_days_billing.go",
+      "domain": "pos_billing",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        36,
+        94,
+        122
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash_days_reports.go",
+      "domain": "pos_billing",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        59,
+        148,
+        272
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_catalog.go",
+      "domain": "pos_billing",
+      "sites": 18,
+      "dynamic": 3,
+      "lines": [
+        34,
+        94,
+        103,
+        125,
+        142,
+        192,
+        198,
+        210,
+        219,
+        221,
+        234,
+        278,
+        282,
+        287,
+        298,
+        304,
+        309,
+        330
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_checkout.go",
+      "domain": "pos_billing",
+      "sites": 48,
+      "dynamic": 0,
+      "lines": [
+        57,
+        60,
+        64,
+        69,
+        103,
+        130,
+        136,
+        175,
+        191,
+        199,
+        221,
+        225,
+        230,
+        235,
+        238,
+        243,
+        246,
+        251,
+        309,
+        349,
+        354,
+        376,
+        383,
+        388,
+        391,
+        404,
+        553,
+        611,
+        679,
+        687,
+        700,
+        716,
+        725,
+        731,
+        748,
+        753,
+        760,
+        765,
+        772,
+        779,
+        781,
+        799,
+        830,
+        835,
+        839,
+        891,
+        937,
+        968
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_courses.go",
+      "domain": "pos_billing",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        68,
+        95,
+        121
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_customers.go",
+      "domain": "pos_billing",
+      "sites": 16,
+      "dynamic": 1,
+      "lines": [
+        84,
+        111,
+        153,
+        162,
+        181,
+        188,
+        202,
+        211,
+        241,
+        248,
+        262,
+        278,
+        319,
+        325,
+        332,
+        337
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_fiscal.go",
+      "domain": "pos_billing",
+      "sites": 23,
+      "dynamic": 1,
+      "lines": [
+        92,
+        97,
+        218,
+        228,
+        230,
+        294,
+        372,
+        387,
+        390,
+        479,
+        492,
+        496,
+        530,
+        646,
+        662,
+        719,
+        760,
+        795,
+        807,
+        812,
+        856,
+        965,
+        995
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_kitchen.go",
+      "domain": "pos_billing",
+      "sites": 22,
+      "dynamic": 4,
+      "lines": [
+        61,
+        97,
+        106,
+        127,
+        164,
+        179,
+        233,
+        245,
+        272,
+        293,
+        346,
+        379,
+        386,
+        390,
+        404,
+        410,
+        437,
+        452,
+        501,
+        516,
+        536,
+        578
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_line_move.go",
+      "domain": "pos_billing",
+      "sites": 13,
+      "dynamic": 0,
+      "lines": [
+        49,
+        57,
+        85,
+        88,
+        96,
+        99,
+        111,
+        176,
+        187,
+        211,
+        240,
+        243,
+        272
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_modifiers.go",
+      "domain": "pos_billing",
+      "sites": 30,
+      "dynamic": 1,
+      "lines": [
+        90,
+        114,
+        151,
+        189,
+        317,
+        328,
+        348,
+        421,
+        475,
+        488,
+        498,
+        505,
+        516,
+        522,
+        532,
+        553,
+        557,
+        561,
+        593,
+        597,
+        627,
+        640,
+        650,
+        656,
+        666,
+        684,
+        715,
+        722,
+        727,
+        732
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_operations.go",
+      "domain": "pos_billing",
+      "sites": 27,
+      "dynamic": 0,
+      "lines": [
+        26,
+        61,
+        70,
+        91,
+        122,
+        172,
+        182,
+        187,
+        218,
+        232,
+        241,
+        242,
+        282,
+        292,
+        296,
+        344,
+        355,
+        361,
+        363,
+        371,
+        409,
+        442,
+        468,
+        486,
+        491,
+        544,
+        552
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_packs.go",
+      "domain": "pos_billing",
+      "sites": 23,
+      "dynamic": 3,
+      "lines": [
+        78,
+        129,
+        171,
+        322,
+        354,
+        367,
+        373,
+        383,
+        389,
+        395,
+        405,
+        426,
+        427,
+        434,
+        438,
+        474,
+        482,
+        512,
+        521,
+        531,
+        541,
+        547,
+        565
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_pin.go",
+      "domain": "pos_billing",
+      "sites": 12,
+      "dynamic": 1,
+      "lines": [
+        61,
+        77,
+        105,
+        120,
+        162,
+        173,
+        180,
+        189,
+        206,
+        210,
+        237,
+        258
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_pin_policy.go",
+      "domain": "pos_billing",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        46,
+        63
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_rail.go",
+      "domain": "pos_billing",
+      "sites": 53,
+      "dynamic": 2,
+      "lines": [
+        105,
+        115,
+        117,
+        127,
+        182,
+        185,
+        192,
+        207,
+        213,
+        219,
+        238,
+        250,
+        255,
+        261,
+        268,
+        271,
+        276,
+        280,
+        284,
+        288,
+        293,
+        296,
+        300,
+        346,
+        355,
+        387,
+        403,
+        407,
+        411,
+        419,
+        475,
+        491,
+        527,
+        539,
+        549,
+        594,
+        605,
+        618,
+        620,
+        627,
+        635,
+        667,
+        679,
+        688,
+        703,
+        743,
+        787,
+        793,
+        804,
+        812,
+        814,
+        816,
+        818
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_recall.go",
+      "domain": "pos_billing",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        65,
+        88,
+        129,
+        137,
+        177,
+        193,
+        223,
+        237
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_reports.go",
+      "domain": "pos_billing",
+      "sites": 12,
+      "dynamic": 0,
+      "lines": [
+        35,
+        65,
+        96,
+        118,
+        138,
+        174,
+        223,
+        226,
+        261,
+        278,
+        284,
+        286
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_reservations.go",
+      "domain": "pos_billing",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        31,
+        65
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_split.go",
+      "domain": "pos_billing",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        15,
+        46,
+        55,
+        77,
+        82,
+        116,
+        120,
+        129
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_pos_stock_realtime.go",
+      "domain": "pos_billing",
+      "sites": 25,
+      "dynamic": 0,
+      "lines": [
+        19,
+        74,
+        133,
+        144,
+        155,
+        165,
+        175,
+        184,
+        196,
+        219,
+        250,
+        260,
+        270,
+        279,
+        314,
+        323,
+        334,
+        358,
+        367,
+        376,
+        391,
+        396,
+        411,
+        443,
+        475
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_postres.go",
+      "domain": "pos_billing",
+      "sites": 4,
+      "dynamic": 1,
+      "lines": [
+        31,
+        126,
+        218,
+        263
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_preferences.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        136,
+        154,
+        170,
+        189,
+        203
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_premium.go",
+      "domain": "pos_billing",
+      "sites": 39,
+      "dynamic": 16,
+      "lines": [
+        535,
+        579,
+        590,
+        874,
+        916,
+        1101,
+        1112,
+        1134,
+        1182,
+        1289,
+        1320,
+        1761,
+        2020,
+        2101,
+        2179,
+        2216,
+        2258,
+        2374,
+        2440,
+        2674,
+        2691,
+        2851,
+        2903,
+        2931,
+        3017,
+        3048,
+        3068,
+        3320,
+        3332,
+        3339,
+        3459,
+        3483,
+        3589,
+        3657,
+        3683,
+        3690,
+        3718,
+        3741,
+        3758
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_production_labour.go",
+      "domain": "core_backoffice",
+      "sites": 16,
+      "dynamic": 0,
+      "lines": [
+        19,
+        49,
+        83,
+        87,
+        99,
+        126,
+        159,
+        164,
+        169,
+        180,
+        197,
+        208,
+        234,
+        239,
+        243,
+        252
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_provision.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 1,
+      "lines": [
+        28,
+        42
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_rbac.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        228,
+        252,
+        284,
+        314
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_roles.go",
+      "domain": "core_backoffice",
+      "sites": 14,
+      "dynamic": 0,
+      "lines": [
+        226,
+        279,
+        320,
+        531,
+        536,
+        545,
+        606,
+        649,
+        673,
+        695,
+        701,
+        724,
+        834,
+        893
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_salons.go",
+      "domain": "core_backoffice",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        56,
+        78,
+        165,
+        304,
+        380,
+        391,
+        430,
+        461,
+        471,
+        476
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_settings.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        44,
+        118,
+        162,
+        213
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_special_dates.go",
+      "domain": "bookings",
+      "sites": 13,
+      "dynamic": 2,
+      "lines": [
+        127,
+        218,
+        271,
+        303,
+        327,
+        387,
+        630,
+        729,
+        770,
+        781,
+        788,
+        817,
+        830
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock.go",
+      "domain": "catalog_stock",
+      "sites": 69,
+      "dynamic": 5,
+      "lines": [
+        94,
+        223,
+        228,
+        273,
+        278,
+        286,
+        291,
+        331,
+        336,
+        341,
+        370,
+        383,
+        402,
+        436,
+        465,
+        490,
+        498,
+        549,
+        565,
+        597,
+        679,
+        685,
+        731,
+        762,
+        766,
+        785,
+        835,
+        842,
+        848,
+        879,
+        891,
+        925,
+        931,
+        938,
+        943,
+        955,
+        960,
+        994,
+        1005,
+        1030,
+        1038,
+        1091,
+        1105,
+        1110,
+        1116,
+        1121,
+        1136,
+        1141,
+        1148,
+        1172,
+        1180,
+        1238,
+        1243,
+        1271,
+        1321,
+        1377,
+        1396,
+        1422,
+        1428,
+        1433,
+        1446,
+        1455,
+        1476,
+        1483,
+        1523,
+        1555,
+        1612,
+        1689,
+        1774
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_analytics.go",
+      "domain": "catalog_stock",
+      "sites": 26,
+      "dynamic": 0,
+      "lines": [
+        132,
+        149,
+        156,
+        215,
+        220,
+        264,
+        265,
+        266,
+        307,
+        420,
+        462,
+        464,
+        500,
+        502,
+        526,
+        534,
+        568,
+        573,
+        615,
+        633,
+        645,
+        667,
+        773,
+        786,
+        823,
+        918
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_documents.go",
+      "domain": "catalog_stock",
+      "sites": 34,
+      "dynamic": 0,
+      "lines": [
+        148,
+        160,
+        166,
+        229,
+        298,
+        331,
+        340,
+        398,
+        418,
+        443,
+        481,
+        490,
+        495,
+        499,
+        511,
+        543,
+        551,
+        556,
+        590,
+        603,
+        607,
+        634,
+        643,
+        648,
+        670,
+        674,
+        679,
+        681,
+        683,
+        698,
+        710,
+        722,
+        736,
+        740
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_import.go",
+      "domain": "catalog_stock",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        348,
+        350,
+        381,
+        387,
+        393,
+        399
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_margin_scopes.go",
+      "domain": "catalog_stock",
+      "sites": 9,
+      "dynamic": 0,
+      "lines": [
+        200,
+        208,
+        218,
+        226,
+        233,
+        256,
+        273,
+        315,
+        343
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_margin_targets.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        74,
+        86,
+        152
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_permissions.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        18,
+        104
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_recipes.go",
+      "domain": "catalog_stock",
+      "sites": 29,
+      "dynamic": 0,
+      "lines": [
+        105,
+        140,
+        187,
+        196,
+        215,
+        253,
+        259,
+        266,
+        276,
+        280,
+        291,
+        301,
+        306,
+        317,
+        377,
+        382,
+        402,
+        446,
+        482,
+        498,
+        509,
+        511,
+        523,
+        528,
+        533,
+        541,
+        545,
+        550,
+        555
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_reconciliation.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        19,
+        56,
+        60
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_suppliers.go",
+      "domain": "catalog_stock",
+      "sites": 17,
+      "dynamic": 2,
+      "lines": [
+        29,
+        81,
+        89,
+        124,
+        132,
+        156,
+        174,
+        197,
+        260,
+        282,
+        288,
+        294,
+        301,
+        310,
+        314,
+        352,
+        391
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_bulk.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        49,
+        70,
+        142,
+        177,
+        190
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_components.go",
+      "domain": "core_backoffice",
+      "sites": 11,
+      "dynamic": 1,
+      "lines": [
+        30,
+        69,
+        119,
+        128,
+        146,
+        150,
+        189,
+        210,
+        237,
+        251,
+        273
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_cost.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        142,
+        222,
+        268
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_duplicate.go",
+      "domain": "core_backoffice",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        39,
+        58,
+        68,
+        78,
+        93,
+        106
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_ensure.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 2,
+      "lines": [
+        65,
+        99,
+        108,
+        115,
+        127
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_image_worker.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        55,
+        93,
+        102,
+        195
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_images.go",
+      "domain": "core_backoffice",
+      "sites": 9,
+      "dynamic": 0,
+      "lines": [
+        40,
+        52,
+        79,
+        86,
+        124,
+        179,
+        204,
+        217,
+        241
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_link.go",
+      "domain": "core_backoffice",
+      "sites": 20,
+      "dynamic": 7,
+      "lines": [
+        47,
+        76,
+        84,
+        125,
+        133,
+        145,
+        176,
+        209,
+        288,
+        297,
+        301,
+        303,
+        399,
+        417,
+        497,
+        513,
+        524,
+        528,
+        530,
+        532
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_step_upload.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        94
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_steps.go",
+      "domain": "core_backoffice",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        41,
+        49,
+        74,
+        103,
+        109,
+        116,
+        149,
+        188,
+        196,
+        213
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheets.go",
+      "domain": "core_backoffice",
+      "sites": 13,
+      "dynamic": 1,
+      "lines": [
+        49,
+        147,
+        156,
+        165,
+        262,
+        272,
+        287,
+        300,
+        327,
+        370,
+        390,
+        443,
+        452
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheets_ws.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 2,
+      "lines": [
+        197,
+        207
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_uazapi_provisioning.go",
+      "domain": "whatsapp_bot",
+      "sites": 17,
+      "dynamic": 0,
+      "lines": [
+        160,
+        218,
+        229,
+        244,
+        316,
+        622,
+        662,
+        729,
+        762,
+        844,
+        861,
+        884,
+        894,
+        904,
+        919,
+        1117,
+        1139
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_uazapi_servers_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 1,
+      "lines": [
+        209,
+        421,
+        458,
+        479
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_vinos.go",
+      "domain": "catalog_stock",
+      "sites": 7,
+      "dynamic": 7,
+      "lines": [
+        90,
+        293,
+        417,
+        450,
+        574,
+        585,
+        622
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_vinos_cutout.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "dynamic": 2,
+      "lines": [
+        72,
+        110
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_vinos_ws.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "dynamic": 4,
+      "lines": [
+        269,
+        379,
+        464,
+        493
+      ]
+    },
+    {
+      "file": "internal/api/beverage_options.go",
+      "domain": "core_backoffice",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        35,
+        117,
+        134,
+        144,
+        155,
+        271
+      ]
+    },
+    {
+      "file": "internal/api/bo_app_version.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        172,
+        247,
+        280
+      ]
+    },
+    {
+      "file": "internal/api/booking_availability_context.go",
+      "domain": "bookings",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        30,
+        81,
+        87
+      ]
+    },
+    {
+      "file": "internal/api/booking_checkout.go",
+      "domain": "bookings",
+      "sites": 15,
+      "dynamic": 0,
+      "lines": [
+        100,
+        195,
+        229,
+        233,
+        275,
+        282,
+        347,
+        352,
+        372,
+        406,
+        409,
+        419,
+        481,
+        553,
+        584
+      ]
+    },
+    {
+      "file": "internal/api/booking_documents.go",
+      "domain": "bookings",
+      "sites": 11,
+      "dynamic": 0,
+      "lines": [
+        388,
+        405,
+        420,
+        473,
+        485,
+        509,
+        533,
+        577,
+        613,
+        635,
+        639
+      ]
+    },
+    {
+      "file": "internal/api/booking_extras.go",
+      "domain": "bookings",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        31,
+        68,
+        78,
+        89
+      ]
+    },
+    {
+      "file": "internal/api/booking_insert.go",
+      "domain": "bookings",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        913,
+        967,
+        1138
+      ]
+    },
+    {
+      "file": "internal/api/booking_notification_settings.go",
+      "domain": "bookings",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        44,
+        61
+      ]
+    },
+    {
+      "file": "internal/api/booking_reminders.go",
+      "domain": "bookings",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        133,
+        275,
+        313,
+        326,
+        333,
+        337
+      ]
+    },
+    {
+      "file": "internal/api/bookings_admin.go",
+      "domain": "bookings",
+      "sites": 14,
+      "dynamic": 1,
+      "lines": [
+        57,
+        109,
+        269,
+        448,
+        522,
+        571,
+        607,
+        660,
+        686,
+        693,
+        776,
+        905,
+        924,
+        953
+      ]
+    },
+    {
+      "file": "internal/api/bunny_config.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        137
+      ]
+    },
+    {
+      "file": "internal/api/cafes_page_seo.go",
+      "domain": "site_analytics",
+      "sites": 2,
+      "dynamic": 2,
+      "lines": [
+        76,
+        134
+      ]
+    },
+    {
+      "file": "internal/api/calendar_data.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        107,
+        143,
+        175
+      ]
+    },
+    {
+      "file": "internal/api/campaign_auto_retake.go",
+      "domain": "campaigns_messaging",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        63,
+        100,
+        117,
+        165,
+        189,
+        199
+      ]
+    },
+    {
+      "file": "internal/api/campaign_bounce_sync.go",
+      "domain": "campaigns_messaging",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        264,
+        269,
+        278,
+        305,
+        373
+      ]
+    },
+    {
+      "file": "internal/api/campaign_email_guard.go",
+      "domain": "campaigns_messaging",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        304,
+        308,
+        320,
+        326
+      ]
+    },
+    {
+      "file": "internal/api/campaign_email_retry.go",
+      "domain": "campaigns_messaging",
+      "sites": 13,
+      "dynamic": 0,
+      "lines": [
+        44,
+        50,
+        57,
+        88,
+        96,
+        98,
+        100,
+        102,
+        107,
+        111,
+        119,
+        132,
+        134
+      ]
+    },
+    {
+      "file": "internal/api/campaign_email_validation.go",
+      "domain": "campaigns_messaging",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        29,
+        102
+      ]
+    },
+    {
+      "file": "internal/api/campaign_tools.go",
+      "domain": "campaigns_messaging",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        641,
+        645,
+        945,
+        981,
+        1227
+      ]
+    },
+    {
+      "file": "internal/api/chatgpt_plugin_tokens.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 1,
+      "lines": [
+        74,
+        91,
+        118,
+        136,
+        182
+      ]
+    },
+    {
+      "file": "internal/api/checkcancel.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        115
+      ]
+    },
+    {
+      "file": "internal/api/comida.go",
+      "domain": "catalog_stock",
+      "sites": 31,
+      "dynamic": 12,
+      "lines": [
+        330,
+        347,
+        365,
+        389,
+        411,
+        580,
+        663,
+        807,
+        816,
+        938,
+        943,
+        1025,
+        1032,
+        1185,
+        1264,
+        1308,
+        1487,
+        1547,
+        1616,
+        1793,
+        1857,
+        1948,
+        1969,
+        2023,
+        2025,
+        2115,
+        2133,
+        2160,
+        2231,
+        2290,
+        2325
+      ]
+    },
+    {
+      "file": "internal/api/conversation_history.go",
+      "domain": "whatsapp_bot",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        46,
+        100,
+        127,
+        222,
+        244,
+        254,
+        268,
+        283
+      ]
+    },
+    {
+      "file": "internal/api/conversation_state.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        39,
+        147,
+        159,
+        170
+      ]
+    },
+    {
+      "file": "internal/api/events.go",
+      "domain": "core_backoffice",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        51,
+        88,
+        100,
+        107,
+        114,
+        118
+      ]
+    },
+    {
+      "file": "internal/api/floors_date.go",
+      "domain": "bookings",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        83,
+        89,
+        132,
+        157,
+        165,
+        172
+      ]
+    },
+    {
+      "file": "internal/api/group_menus.go",
+      "domain": "catalog_stock",
+      "sites": 14,
+      "dynamic": 6,
+      "lines": [
+        53,
+        145,
+        261,
+        349,
+        384,
+        468,
+        488,
+        533,
+        548,
+        599,
+        689,
+        894,
+        923,
+        1054
+      ]
+    },
+    {
+      "file": "internal/api/group_menus_party_size.go",
+      "domain": "catalog_stock",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        84
+      ]
+    },
+    {
+      "file": "internal/api/guest_count_flags.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        32
+      ]
+    },
+    {
+      "file": "internal/api/hour_percentages.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        40,
+        64,
+        92,
+        127,
+        133,
+        223,
+        237,
+        239
+      ]
+    },
+    {
+      "file": "internal/api/hour_split.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        233,
+        255,
+        278,
+        286,
+        292,
+        304,
+        313,
+        528
+      ]
+    },
+    {
+      "file": "internal/api/hours.go",
+      "domain": "core_backoffice",
+      "sites": 9,
+      "dynamic": 0,
+      "lines": [
+        46,
+        53,
+        68,
+        244,
+        291,
+        302,
+        304,
+        330,
+        355
+      ]
+    },
+    {
+      "file": "internal/api/instatic_manager.go",
+      "domain": "site_analytics",
+      "sites": 24,
+      "dynamic": 0,
+      "lines": [
+        92,
+        199,
+        223,
+        253,
+        308,
+        316,
+        338,
+        349,
+        404,
+        414,
+        446,
+        535,
+        586,
+        622,
+        623,
+        631,
+        642,
+        660,
+        673,
+        696,
+        719,
+        765,
+        882,
+        887
+      ]
+    },
+    {
+      "file": "internal/api/instatic_proxy.go",
+      "domain": "site_analytics",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        146,
+        151,
+        161
+      ]
+    },
+    {
+      "file": "internal/api/invoice_numbering.go",
+      "domain": "pos_billing",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        162,
+        192,
+        225,
+        235,
+        247,
+        265,
+        310,
+        340,
+        401,
+        444
+      ]
+    },
+    {
+      "file": "internal/api/legal_pages.go",
+      "domain": "site_analytics",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        33,
+        86,
+        184
+      ]
+    },
+    {
+      "file": "internal/api/location_booking.go",
+      "domain": "bookings",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        43,
+        73,
+        119,
+        127,
+        135
+      ]
+    },
+    {
+      "file": "internal/api/marketing_advertising.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        61
+      ]
+    },
+    {
+      "file": "internal/api/mcp_oauth_routes.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        306,
+        308
+      ]
+    },
+    {
+      "file": "internal/api/mcp_oauth_store.go",
+      "domain": "core_backoffice",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        61,
+        78,
+        109,
+        128,
+        146,
+        166,
+        179,
+        205,
+        248,
+        271
+      ]
+    },
+    {
+      "file": "internal/api/member_whatsapp_verification.go",
+      "domain": "whatsapp_bot",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        44,
+        79,
+        99,
+        136,
+        146,
+        150
+      ]
+    },
+    {
+      "file": "internal/api/menu_public_seo.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        29,
+        38
+      ]
+    },
+    {
+      "file": "internal/api/menu_public_seo_handlers.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        30,
+        95,
+        107
+      ]
+    },
+    {
+      "file": "internal/api/menu_section_cta.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        106,
+        116
+      ]
+    },
+    {
+      "file": "internal/api/menu_section_dessert_source.go",
+      "domain": "catalog_stock",
+      "sites": 11,
+      "dynamic": 1,
+      "lines": [
+        58,
+        76,
+        82,
+        94,
+        110,
+        192,
+        253,
+        370,
+        416,
+        423,
+        458
+      ]
+    },
+    {
+      "file": "internal/api/menu_visibility_admin.go",
+      "domain": "catalog_stock",
+      "sites": 8,
+      "dynamic": 0,
+      "lines": [
+        37,
+        46,
+        60,
+        97,
+        126,
+        195,
+        206,
+        225
+      ]
+    },
+    {
+      "file": "internal/api/menu_weekday_availability.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "dynamic": 2,
+      "lines": [
+        84,
+        116,
+        239,
+        263,
+        277
+      ]
+    },
+    {
+      "file": "internal/api/mobility_config.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        22,
+        134
+      ]
+    },
+    {
+      "file": "internal/api/modification_checker.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        42
+      ]
+    },
+    {
+      "file": "internal/api/modification_history.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        15,
+        39,
+        40,
+        43
+      ]
+    },
+    {
+      "file": "internal/api/modifications_api.go",
+      "domain": "core_backoffice",
+      "sites": 12,
+      "dynamic": 2,
+      "lines": [
+        94,
+        123,
+        134,
+        386,
+        392,
+        505,
+        513,
+        597,
+        678,
+        747,
+        861,
+        876
+      ]
+    },
+    {
+      "file": "internal/api/n8n_reminder.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        232,
+        438,
+        457,
+        459,
+        469
+      ]
+    },
+    {
+      "file": "internal/api/occupancy.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        23,
+        30,
+        74,
+        145,
+        170
+      ]
+    },
+    {
+      "file": "internal/api/opening_hours.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        102,
+        115
+      ]
+    },
+    {
+      "file": "internal/api/pre_shift_reminders.go",
+      "domain": "members_staff",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        18,
+        43,
+        49,
+        53
+      ]
+    },
+    {
+      "file": "internal/api/public_ads.go",
+      "domain": "site_analytics",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        57
+      ]
+    },
+    {
+      "file": "internal/api/public_ads_embed.go",
+      "domain": "site_analytics",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        48
+      ]
+    },
+    {
+      "file": "internal/api/public_booking_api.go",
+      "domain": "bookings",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        174,
+        245,
+        327,
+        363,
+        490
+      ]
+    },
+    {
+      "file": "internal/api/public_menus.go",
+      "domain": "catalog_stock",
+      "sites": 18,
+      "dynamic": 10,
+      "lines": [
+        349,
+        442,
+        530,
+        548,
+        572,
+        608,
+        710,
+        762,
+        1038,
+        1113,
+        1267,
+        1301,
+        1380,
+        1526,
+        1580,
+        1777,
+        1878,
+        1924
+      ]
+    },
+    {
+      "file": "internal/api/public_reservation_pages.go",
+      "domain": "bookings",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        50,
+        372,
+        798,
+        828,
+        1097,
+        1166
+      ]
+    },
+    {
+      "file": "internal/api/public_unsubscribe.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        135,
+        168,
+        193,
+        306,
+        315
+      ]
+    },
+    {
+      "file": "internal/api/reservation_day_context.go",
+      "domain": "bookings",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        61,
+        246,
+        339
+      ]
+    },
+    {
+      "file": "internal/api/reservation_self_service.go",
+      "domain": "bookings",
+      "sites": 5,
+      "dynamic": 1,
+      "lines": [
+        164,
+        202,
+        242,
+        489,
+        584
+      ]
+    },
+    {
+      "file": "internal/api/reservation_special_dates_public.go",
+      "domain": "bookings",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        86,
+        189,
+        276
+      ]
+    },
+    {
+      "file": "internal/api/reservations_availability.go",
+      "domain": "bookings",
+      "sites": 17,
+      "dynamic": 1,
+      "lines": [
+        45,
+        162,
+        169,
+        225,
+        290,
+        340,
+        402,
+        412,
+        483,
+        541,
+        575,
+        676,
+        707,
+        730,
+        760,
+        883,
+        890
+      ]
+    },
+    {
+      "file": "internal/api/restaurant_profile.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        55,
+        140,
+        174
+      ]
+    },
+    {
+      "file": "internal/api/rice_types.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        21
+      ]
+    },
+    {
+      "file": "internal/api/salon_condesa.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        32,
+        89
+      ]
+    },
+    {
+      "file": "internal/api/schedule_notifications.go",
+      "domain": "members_staff",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        38
+      ]
+    },
+    {
+      "file": "internal/api/seo_item_routes.go",
+      "domain": "site_analytics",
+      "sites": 10,
+      "dynamic": 4,
+      "lines": [
+        249,
+        358,
+        462,
+        597,
+        606,
+        618,
+        624,
+        817,
+        825,
+        844
+      ]
+    },
+    {
+      "file": "internal/api/server.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "dynamic": 3,
+      "lines": [
+        1437,
+        1532,
+        1571,
+        1590,
+        1690
+      ]
+    },
+    {
+      "file": "internal/api/site_builder.go",
+      "domain": "site_analytics",
+      "sites": 47,
+      "dynamic": 5,
+      "lines": [
+        205,
+        270,
+        287,
+        399,
+        435,
+        461,
+        536,
+        564,
+        600,
+        672,
+        695,
+        715,
+        758,
+        830,
+        854,
+        892,
+        907,
+        933,
+        986,
+        994,
+        1001,
+        1018,
+        1037,
+        1062,
+        1117,
+        1152,
+        1192,
+        1261,
+        1284,
+        1333,
+        1351,
+        1366,
+        1394,
+        1402,
+        1409,
+        1426,
+        1441,
+        1452,
+        1485,
+        1531,
+        1594,
+        1627,
+        1642,
+        1660,
+        1687,
+        1711,
+        1737
+      ]
+    },
+    {
+      "file": "internal/api/site_builder_billing.go",
+      "domain": "pos_billing",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        70,
+        95,
+        99,
+        127,
+        141
+      ]
+    },
+    {
+      "file": "internal/api/site_builder_registrar.go",
+      "domain": "site_analytics",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        115,
+        164,
+        165
+      ]
+    },
+    {
+      "file": "internal/api/special_booking_qr.go",
+      "domain": "bookings",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        63,
+        73,
+        94,
+        111,
+        155
+      ]
+    },
+    {
+      "file": "internal/api/special_booking_snapshot.go",
+      "domain": "bookings",
+      "sites": 8,
+      "dynamic": 2,
+      "lines": [
+        176,
+        203,
+        659,
+        672,
+        698,
+        730,
+        739,
+        761
+      ]
+    },
+    {
+      "file": "internal/api/special_date_menu_sections.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        50,
+        62,
+        140
+      ]
+    },
+    {
+      "file": "internal/api/special_date_stats.go",
+      "domain": "bookings",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        45
+      ]
+    },
+    {
+      "file": "internal/api/special_date_whatsapp_only.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        36,
+        58
+      ]
+    },
+    {
+      "file": "internal/api/special_date_whatsapp_only_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        39
+      ]
+    },
+    {
+      "file": "internal/api/special_menu_cta.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        74,
+        131,
+        140,
+        183
+      ]
+    },
+    {
+      "file": "internal/api/special_menu_group_booking.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        77,
+        109,
+        198
+      ]
+    },
+    {
+      "file": "internal/api/special_menu_principales.go",
+      "domain": "catalog_stock",
+      "sites": 7,
+      "dynamic": 0,
+      "lines": [
+        43,
+        73,
+        121,
+        150,
+        182,
+        188,
+        214
+      ]
+    },
+    {
+      "file": "internal/api/stock_digest.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        113,
+        130,
+        193,
+        221
+      ]
+    },
+    {
+      "file": "internal/api/stripe_connect.go",
+      "domain": "pos_billing",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        75,
+        113,
+        350,
+        445
+      ]
+    },
+    {
+      "file": "internal/api/stripe_connect_fees.go",
+      "domain": "pos_billing",
+      "sites": 6,
+      "dynamic": 0,
+      "lines": [
+        62,
+        92,
+        138,
+        189,
+        215,
+        220
+      ]
+    },
+    {
+      "file": "internal/api/tenant.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        128,
+        203
+      ]
+    },
+    {
+      "file": "internal/api/translations.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "dynamic": 1,
+      "lines": [
+        226,
+        262,
+        528,
+        549
+      ]
+    },
+    {
+      "file": "internal/api/website_builder_generator.go",
+      "domain": "site_analytics",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        77,
+        110,
+        141,
+        164
+      ]
+    },
+    {
+      "file": "internal/api/website_builder_handlers.go",
+      "domain": "site_analytics",
+      "sites": 48,
+      "dynamic": 4,
+      "lines": [
+        36,
+        74,
+        293,
+        294,
+        295,
+        296,
+        324,
+        331,
+        414,
+        418,
+        486,
+        502,
+        533,
+        538,
+        569,
+        647,
+        654,
+        723,
+        752,
+        796,
+        813,
+        859,
+        958,
+        969,
+        1038,
+        1067,
+        1111,
+        1140,
+        1230,
+        1274,
+        1290,
+        1414,
+        1498,
+        1505,
+        1530,
+        1542,
+        1554,
+        1567,
+        1580,
+        1656,
+        1681,
+        1686,
+        1720,
+        1738,
+        1759,
+        1764,
+        1790,
+        1801
+      ]
+    },
+    {
+      "file": "internal/api/website_builder_public.go",
+      "domain": "site_analytics",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        67,
+        75,
+        118,
+        160
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        42,
+        53,
+        157,
+        316
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_admin_reads.go",
+      "domain": "whatsapp_bot",
+      "sites": 15,
+      "dynamic": 1,
+      "lines": [
+        93,
+        150,
+        171,
+        221,
+        254,
+        324,
+        401,
+        420,
+        512,
+        539,
+        637,
+        679,
+        708,
+        736,
+        770
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_ai_config.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        98,
+        124,
+        219,
+        228
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_booking_resend_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        85
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_catalog_extras.go",
+      "domain": "whatsapp_bot",
+      "sites": 10,
+      "dynamic": 0,
+      "lines": [
+        109,
+        153,
+        191,
+        203,
+        206,
+        215,
+        240,
+        247,
+        254,
+        263
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_chat_images.go",
+      "domain": "whatsapp_bot",
+      "sites": 3,
+      "dynamic": 1,
+      "lines": [
+        72,
+        75,
+        109
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_config_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 13,
+      "dynamic": 6,
+      "lines": [
+        146,
+        170,
+        193,
+        211,
+        321,
+        340,
+        442,
+        445,
+        454,
+        573,
+        586,
+        686,
+        699
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_context_sqlite.go",
+      "domain": "whatsapp_bot",
+      "sites": 15,
+      "dynamic": 2,
+      "lines": [
+        110,
+        126,
+        255,
+        262,
+        272,
+        303,
+        322,
+        325,
+        335,
+        355,
+        381,
+        396,
+        408,
+        446,
+        467
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_dish_allergens_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        44,
+        56
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_executor.go",
+      "domain": "whatsapp_bot",
+      "sites": 22,
+      "dynamic": 1,
+      "lines": [
+        406,
+        454,
+        465,
+        486,
+        501,
+        547,
+        720,
+        903,
+        947,
+        964,
+        972,
+        1089,
+        1129,
+        1145,
+        1218,
+        1311,
+        1340,
+        1371,
+        1415,
+        1424,
+        1439,
+        1452
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_extras_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 6,
+      "dynamic": 2,
+      "lines": [
+        86,
+        275,
+        313,
+        330,
+        363,
+        373
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_flags.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 1,
+      "lines": [
+        91,
+        135,
+        156,
+        165
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_floor.go",
+      "domain": "whatsapp_bot",
+      "sites": 7,
+      "dynamic": 2,
+      "lines": [
+        67,
+        106,
+        176,
+        240,
+        255,
+        298,
+        307
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_groupmenu_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 8,
+      "dynamic": 2,
+      "lines": [
+        106,
+        241,
+        367,
+        418,
+        435,
+        471,
+        490,
+        503
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_groupmenu_party.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        49,
+        62
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_groupmenu_remove.go",
+      "domain": "whatsapp_bot",
+      "sites": 6,
+      "dynamic": 1,
+      "lines": [
+        113,
+        151,
+        168,
+        182,
+        200,
+        207
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_history.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 1,
+      "lines": [
+        57
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_human_takeover.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 2,
+      "lines": [
+        94,
+        105
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_inbound_queue.go",
+      "domain": "whatsapp_bot",
+      "sites": 5,
+      "dynamic": 5,
+      "lines": [
+        52,
+        75,
+        98,
+        191,
+        199
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_invoice_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        481
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_media_ops.go",
+      "domain": "whatsapp_bot",
+      "sites": 7,
+      "dynamic": 3,
+      "lines": [
+        199,
+        209,
+        366,
+        451,
+        488,
+        534,
+        580
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_menu_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 7,
+      "dynamic": 0,
+      "lines": [
+        85,
+        172,
+        275,
+        317,
+        379,
+        422,
+        504
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_mobility_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 5,
+      "dynamic": 2,
+      "lines": [
+        128,
+        162,
+        176,
+        212,
+        222
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_notif_settings.go",
+      "domain": "whatsapp_bot",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        87,
+        124,
+        138,
+        141,
+        154
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_privileged_contacts.go",
+      "domain": "whatsapp_bot",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        100,
+        111,
+        202
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_privileged_control_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        348,
+        414,
+        484,
+        499
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_prompt.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        401
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_rag.go",
+      "domain": "whatsapp_bot",
+      "sites": 8,
+      "dynamic": 2,
+      "lines": [
+        149,
+        179,
+        185,
+        189,
+        268,
+        271,
+        287,
+        290
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_rice_admin.go",
+      "domain": "whatsapp_bot",
+      "sites": 6,
+      "dynamic": 1,
+      "lines": [
+        227,
+        269,
+        286,
+        308,
+        327,
+        334
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_sameday.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        76,
+        166,
+        330,
+        359
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_service_session.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        103,
+        116
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_admin_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 52,
+      "dynamic": 11,
+      "lines": [
+        302,
+        356,
+        590,
+        826,
+        835,
+        840,
+        857,
+        858,
+        867,
+        914,
+        939,
+        942,
+        1004,
+        1040,
+        1057,
+        1084,
+        1178,
+        1243,
+        1260,
+        1275,
+        1295,
+        1328,
+        1342,
+        1346,
+        1350,
+        1371,
+        1498,
+        1526,
+        1539,
+        1543,
+        1555,
+        1564,
+        1598,
+        1614,
+        1618,
+        1657,
+        1720,
+        1738,
+        1757,
+        1766,
+        1857,
+        1899,
+        2019,
+        2093,
+        2330,
+        2376,
+        2390,
+        2422,
+        2438,
+        2454,
+        2480,
+        2486
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_create.go",
+      "domain": "whatsapp_bot",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        127,
+        310,
+        384
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_crud_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        420
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_date_adelanto.go",
+      "domain": "whatsapp_bot",
+      "sites": 5,
+      "dynamic": 3,
+      "lines": [
+        47,
+        64,
+        84,
+        87,
+        91
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_policy.go",
+      "domain": "whatsapp_bot",
+      "sites": 4,
+      "dynamic": 0,
+      "lines": [
+        63,
+        91,
+        123,
+        149
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_tools.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 1,
+      "lines": [
+        126
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_staff_bookings.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 1,
+      "lines": [
+        77,
+        154
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_tools_v2.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        89,
+        144
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_unsubscribe.go",
+      "domain": "whatsapp_bot",
+      "sites": 2,
+      "dynamic": 0,
+      "lines": [
+        66,
+        104
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_webhook.go",
+      "domain": "whatsapp_bot",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        300,
+        314,
+        329
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_webhook_evolution.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        276
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_bot_ws_ops.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        135
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_connection_watchdog.go",
+      "domain": "whatsapp_bot",
+      "sites": 3,
+      "dynamic": 0,
+      "lines": [
+        49,
+        115,
+        122
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_outbox.go",
+      "domain": "whatsapp_bot",
+      "sites": 9,
+      "dynamic": 0,
+      "lines": [
+        74,
+        88,
+        108,
+        142,
+        155,
+        164,
+        302,
+        318,
+        330
+      ]
+    },
+    {
+      "file": "internal/api/whatsapp_unreachable.go",
+      "domain": "whatsapp_bot",
+      "sites": 1,
+      "dynamic": 0,
+      "lines": [
+        72
+      ]
+    },
+    {
+      "file": "internal/api/widget_routes.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "dynamic": 1,
+      "lines": [
+        158,
+        264
+      ]
+    },
+    {
+      "file": "internal/api/wines_v2.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "dynamic": 0,
+      "lines": [
+        79,
+        96,
+        103,
+        125,
+        137
+      ]
+    },
+    {
+      "file": "internal/botstore/botstore.go",
+      "domain": "migration_tooling_native",
+      "sites": 11,
+      "dynamic": 8,
+      "lines": [
+        79,
+        109,
+        113,
+        117,
+        121,
+        128,
+        131,
+        150,
+        156,
+        174,
+        183
+      ]
+    },
+    {
+      "file": "internal/botstore/migrate.go",
+      "domain": "migration_tooling_native",
+      "sites": 14,
+      "dynamic": 8,
+      "lines": [
+        74,
+        159,
+        216,
+        245,
+        271,
+        346,
+        351,
+        361,
+        365,
+        366,
+        375,
+        381,
+        384,
+        418
+      ]
+    },
+    {
+      "file": "internal/botstore/mysql.go",
+      "domain": "migration_tooling_native",
+      "sites": 12,
+      "dynamic": 5,
+      "lines": [
+        140,
+        203,
+        208,
+        231,
+        237,
+        252,
+        282,
+        294,
+        306,
+        418,
+        422,
+        427
+      ]
+    },
+    {
+      "file": "internal/db/migrations/migrations.go",
+      "domain": "db_runner",
+      "sites": 4,
+      "dynamic": 1,
+      "lines": [
+        48,
+        60,
+        72,
+        83
+      ]
+    },
+    {
+      "file": "internal/db/mysql.go",
+      "domain": "db_runner",
+      "sites": 1,
+      "dynamic": 1,
+      "lines": [
+        84
+      ]
+    },
+    {
+      "file": "internal/dbmigrate/export.go",
+      "domain": "migration_tooling_native",
+      "sites": 3,
+      "dynamic": 2,
+      "lines": [
+        64,
+        68,
+        128
+      ]
+    },
+    {
+      "file": "internal/dbmigrate/pgimport.go",
+      "domain": "migration_tooling_native",
+      "sites": 15,
+      "dynamic": 8,
+      "lines": [
+        114,
+        279,
+        293,
+        326,
+        329,
+        333,
+        344,
+        370,
+        396,
+        399,
+        455,
+        482,
+        508,
+        529,
+        562
+      ]
+    },
+    {
+      "file": "internal/dbmigrate/schema.go",
+      "domain": "migration_tooling_native",
+      "sites": 1,
+      "dynamic": 1,
+      "lines": [
+        246
+      ]
+    },
+    {
+      "file": "internal/sqldb/sqldb.go",
+      "domain": "migration_tooling_native",
+      "sites": 3,
+      "dynamic": 2,
+      "lines": [
+        88,
+        91,
+        127
+      ]
+    }
+  ]
+}

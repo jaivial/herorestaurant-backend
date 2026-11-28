@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // comidaCategoryDB lets legacy category helpers join a product-write transaction.
@@ -75,22 +76,25 @@ type comidaListQuery struct {
 }
 
 type comidaItemResponse struct {
-	Num          int      `json:"num"`
-	SourceType   string   `json:"source_type,omitempty"`
-	Tipo         string   `json:"tipo,omitempty"`
-	Nombre       string   `json:"nombre"`
-	Precio       float64  `json:"precio"`
-	Descripcion  string   `json:"descripcion,omitempty"`
-	Titulo       string   `json:"titulo,omitempty"`
-	Suplemento   float64  `json:"suplemento,omitempty"`
-	Alergenos    []string `json:"alergenos,omitempty"`
-	Active       bool     `json:"active"`
-	HasFoto      bool     `json:"has_foto"`
-	FotoURL      string   `json:"foto_url,omitempty"`
-	Categoria    string   `json:"categoria,omitempty"`
-	CategoryID   *int     `json:"category_id,omitempty"`
-	CategorySlug string   `json:"category_slug,omitempty"`
-	AiGenerating bool     `json:"ai_generating,omitempty"`
+	Num         int     `json:"num"`
+	SourceType  string  `json:"source_type,omitempty"`
+	Tipo        string  `json:"tipo,omitempty"`
+	Nombre      string  `json:"nombre"`
+	Precio      float64 `json:"precio"`
+	Descripcion string  `json:"descripcion,omitempty"`
+	// Coordination id: comida_description_toggle_v1 - same model as the menu
+	// dishes: the text is kept, the switch decides if the public site shows it.
+	DescriptionEnabled bool     `json:"description_enabled"`
+	Titulo             string   `json:"titulo,omitempty"`
+	Suplemento         float64  `json:"suplemento,omitempty"`
+	Alergenos          []string `json:"alergenos,omitempty"`
+	Active             bool     `json:"active"`
+	HasFoto            bool     `json:"has_foto"`
+	FotoURL            string   `json:"foto_url,omitempty"`
+	Categoria          string   `json:"categoria,omitempty"`
+	CategoryID         *int     `json:"category_id,omitempty"`
+	CategorySlug       string   `json:"category_slug,omitempty"`
+	AiGenerating       bool     `json:"ai_generating,omitempty"`
 	// ProductionType is always sent (never omitempty): the UI needs a definite
 	// RAW/MANUFACTURED value to render, and an absent field would be guessed at.
 	ProductionType     string  `json:"production_type"`
@@ -154,6 +158,7 @@ type comidaUpsertRequest struct {
 	Nombre             *string   `json:"nombre,omitempty"`
 	Precio             *float64  `json:"precio,omitempty"`
 	Descripcion        *string   `json:"descripcion,omitempty"`
+	DescriptionEnabled *bool     `json:"description_enabled,omitempty"`
 	Titulo             *string   `json:"titulo,omitempty"`
 	Suplemento         *float64  `json:"suplemento,omitempty"`
 	Alergenos          *[]string `json:"alergenos,omitempty"`
@@ -323,14 +328,21 @@ func slugifyCategoryName(s string) string {
 
 func ensureBasePlatoCategories(r *http.Request, q comidaCategoryDB, restaurantID int) error {
 	for _, cat := range basePlatoCategories {
-		_, err := q.ExecContext(r.Context(), `
+		_, err := q.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
 			VALUES (?, ?, ?, 'base', 1)
 			ON DUPLICATE KEY UPDATE
 				name = VALUES(name),
 				source = IF(source = 'custom', source, VALUES(source)),
 				active = 1
-		`, restaurantID, cat.Name, cat.Slug)
+		`, `
+			INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
+			VALUES (?, ?, ?, 'base', 1)
+			ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET
+			name = EXCLUDED.name,
+			source = CASE WHEN comida_plato_categories.source = 'custom' THEN comida_plato_categories.source ELSE EXCLUDED.source END,
+			active = 1
+	`), restaurantID, cat.Name, cat.Slug)
 		if err != nil {
 			return err
 		}
@@ -340,14 +352,21 @@ func ensureBasePlatoCategories(r *http.Request, q comidaCategoryDB, restaurantID
 
 func ensureBaseBebidaCategories(r *http.Request, q comidaCategoryDB, restaurantID int) error {
 	for _, cat := range baseBebidaCategories {
-		_, err := q.ExecContext(r.Context(), `
+		_, err := q.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
 			VALUES (?, ?, ?, 'base', 1)
 			ON DUPLICATE KEY UPDATE
 				name = VALUES(name),
 				source = IF(source = 'custom', source, VALUES(source)),
 				active = 1
-		`, restaurantID, cat.Name, cat.Slug)
+		`, `
+			INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
+			VALUES (?, ?, ?, 'base', 1)
+			ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET
+			name = EXCLUDED.name,
+			source = CASE WHEN comida_bebida_categories.source = 'custom' THEN comida_bebida_categories.source ELSE EXCLUDED.source END,
+			active = 1
+	`), restaurantID, cat.Name, cat.Slug)
 		if err != nil {
 			return err
 		}
@@ -358,12 +377,12 @@ func ensureBaseBebidaCategories(r *http.Request, q comidaCategoryDB, restaurantI
 func getCategoryByID(r *http.Request, q comidaCategoryDB, restaurantID, categoryID int) (comidaCategoryResponse, bool, error) {
 	var c comidaCategoryResponse
 	var activeInt int
-	err := q.QueryRowContext(r.Context(), `
+	err := q.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_plato_categories
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
-	`, restaurantID, categoryID).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
+	`), restaurantID, categoryID).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
 	if err == sql.ErrNoRows {
 		return comidaCategoryResponse{}, false, nil
 	}
@@ -382,12 +401,17 @@ func getCategoryBySlugOrName(r *http.Request, q comidaCategoryDB, restaurantID i
 	slug := slugifyCategoryName(raw)
 	var c comidaCategoryResponse
 	var activeInt int
-	err := q.QueryRowContext(r.Context(), `
+	err := q.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_plato_categories
 		WHERE restaurant_id = ? AND (slug = ? OR LOWER(name) = LOWER(?))
 		LIMIT 1
-	`, restaurantID, slug, raw).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
+	`, `
+		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
+		FROM comida_plato_categories
+		WHERE restaurant_id = ? AND (app.norm_ascii(slug) = app.norm_ascii(?) OR LOWER(name) = LOWER(?))
+		LIMIT 1
+	`), restaurantID, slug, raw).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
 	if err == sql.ErrNoRows {
 		return comidaCategoryResponse{}, false, nil
 	}
@@ -404,17 +428,27 @@ func createCustomCategory(r *http.Request, q comidaCategoryDB, restaurantID int,
 		return comidaCategoryResponse{}, sql.ErrNoRows
 	}
 	slug := slugifyCategoryName(name)
-	res, err := q.ExecContext(r.Context(), `
+	// PG: RETURNING the id only when a row was INSERTED (xmax = 0) and 0 on the
+	// ON CONFLICT update path, so the source's id>0 / slug-or-name lookup fallback
+	// is taken exactly as written. Equal to MySQL iff its OK-packet insert id is 0
+	// on the ODKU update/no-change path: NOT established without a server run
+	// (pending, see native-ledger-catalog.json).
+	id64, err := sqldb.InsertID(r.Context(), sqlDialect, q, nativeSQL(`
 		INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
 		VALUES (?, ?, ?, 'custom', 1)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			active = 1
-	`, restaurantID, name, slug)
+	`, `
+		INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
+		VALUES (?, ?, ?, 'custom', 1)
+		ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET
+			name = EXCLUDED.name,
+			active = 1
+	`), "CASE WHEN xmax = 0 THEN id ELSE 0 END", restaurantID, name, slug)
 	if err != nil {
 		return comidaCategoryResponse{}, err
 	}
-	id64, _ := res.LastInsertId()
 	if id64 > 0 {
 		return comidaCategoryResponse{
 			ID:     int(id64),
@@ -573,14 +607,14 @@ func (s *Server) handleComidaPlatoCategoriesList(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_plato_categories
 		WHERE restaurant_id = ? AND active = 1
 		ORDER BY
 			CASE WHEN source = 'base' THEN 0 ELSE 1 END,
 			name ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
 		return
@@ -656,19 +690,28 @@ func (s *Server) handleComidaPlatoCategoriesCreate(w http.ResponseWriter, r *htt
 		return
 	}
 
-	res, err := tx.ExecContext(r.Context(), `
+	// PG: RETURNING the id only when a row was INSERTED (xmax = 0) and 0 on the
+	// ON CONFLICT update path, so the source's id>0 / slug-or-name lookup fallback
+	// is taken exactly as written. Equal to MySQL iff its OK-packet insert id is 0
+	// on the ODKU update/no-change path: NOT established without a server run
+	// (pending, see native-ledger-catalog.json).
+	id64, err := sqldb.InsertID(r.Context(), sqlDialect, tx, nativeSQL(`
 		INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
 		VALUES (?, ?, ?, 'custom', 1)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			active = 1
-	`, restaurantID, name, slug)
+	`, `
+		INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
+		VALUES (?, ?, ?, 'custom', 1)
+		ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET
+			name = EXCLUDED.name,
+			active = 1
+	`), "CASE WHEN xmax = 0 THEN id ELSE 0 END", restaurantID, name, slug)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
-
-	id64, _ := res.LastInsertId()
 	category := comidaCategoryResponse{
 		Name:   name,
 		Slug:   slug,
@@ -769,7 +812,11 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 	}
 	if query.Search != "" {
 		like := "%" + query.Search + "%"
-		where = append(where, "(ci.nombre LIKE ? OR ci.descripcion LIKE ? OR ci.titulo LIKE ?)")
+		if sqlDialect == sqldb.Postgres {
+			like = strings.ToLower(like) // CI LIKE port; accent folding pending
+		}
+		where = append(where, sqlFragment("(ci.nombre LIKE ? OR ci.descripcion LIKE ? OR ci.titulo LIKE ?)",
+			`(LOWER(ci.nombre) COLLATE "C" LIKE ? OR LOWER(ci.descripcion) COLLATE "C" LIKE ? OR LOWER(ci.titulo) COLLATE "C" LIKE ?)`))
 		args = append(args, like, like, like)
 	}
 	if query.Tipo != "" {
@@ -787,7 +834,10 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 		}
 	}
 	if query.Alergeno != "" {
-		where = append(where, "JSON_CONTAINS(COALESCE(ci.alergenos_json, JSON_ARRAY()), JSON_QUOTE(?))")
+		// PG: jsonb @> scalar = MySQL JSON_CONTAINS(target, scalar) for flat
+		// arrays/scalars; nested arrays differ (pending).
+		where = append(where, sqlFragment("JSON_CONTAINS(COALESCE(ci.alergenos_json, JSON_ARRAY()), JSON_QUOTE(?))",
+			"COALESCE(ci.alergenos_json, '[]'::jsonb) @> to_jsonb(CAST(? AS text))"))
 		args = append(args, query.Alergeno)
 	}
 	if query.Suplemento != nil {
@@ -800,16 +850,18 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 
 	whereSQL := strings.Join(where, " AND ")
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), `
+	// Composed from the fixed where fragments above; rebound once.
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COUNT(*)
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
-		WHERE `+whereSQL, args...).Scan(&total); err != nil {
+		WHERE `+whereSQL), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	offset := offsetForPage(query.Page, query.PageSize)
-	rows, err := s.db.QueryContext(r.Context(), `
+	// Composed: dialect head + fixed where fragments + dialect tail; rebound once.
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment(`
 		SELECT
 			ci.id,
 			COALESCE(ci.tipo, ''),
@@ -828,15 +880,44 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			ci.category_id,
 			COALESCE(c.slug, ''),
 			ci.ai_generating,
+			COALESCE(ci.description_enabled, 1),
 			COALESCE(ci.production_type, 'RAW'),
 			ci.stock_recipe_id,
 			ci.stock_item_id
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
-		WHERE `+whereSQL+`
+		WHERE `, `
+		SELECT
+			ci.id,
+			COALESCE(ci.tipo, ''),
+			COALESCE(ci.nombre, ''),
+			COALESCE(ci.precio, 0),
+			COALESCE(ci.descripcion, ''),
+			COALESCE(ci.titulo, ''),
+			COALESCE(ci.suplemento, 0),
+			CAST(ci.alergenos_json AS text),
+			ci.active,
+			CASE WHEN (ci.foto_path IS NOT NULL AND LENGTH(ci.foto_path) > 0) OR ci.foto IS NOT NULL OR ci.foto_url IS NOT NULL THEN 1 ELSE 0 END AS has_foto,
+			COALESCE(ci.foto_path, ''),
+			ci.foto,
+			COALESCE(ci.foto_url, ''),
+			COALESCE(ci.categoria, ''),
+			ci.category_id,
+			COALESCE(c.slug, ''),
+			ci.ai_generating,
+			COALESCE(ci.description_enabled, 1),
+			COALESCE(CAST(ci.production_type AS text), 'RAW'),
+			ci.stock_recipe_id,
+			ci.stock_item_id
+		FROM comida_items ci
+		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
+		WHERE `)+whereSQL+sqlFragment(`
 		ORDER BY ci.active DESC, ci.updated_at DESC, ci.id DESC
 		LIMIT ? OFFSET ?
-	`, append(args, query.PageSize, offset)...)
+	`, `
+		ORDER BY ci.active DESC, ci.updated_at DESC NULLS LAST, ci.id DESC
+		LIMIT ? OFFSET ?
+	`)), append(args, query.PageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -854,6 +935,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			fotoURL       string
 			categoryIDRaw sql.NullInt64
 			aiGenInt      int
+			descEnInt     int
 			recipeIDRaw   sql.NullInt64
 			stockItemRaw  sql.NullInt64
 		)
@@ -875,6 +957,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			&categoryIDRaw,
 			&item.CategorySlug,
 			&aiGenInt,
+			&descEnInt,
 			&item.ProductionType,
 			&recipeIDRaw,
 			&stockItemRaw,
@@ -892,6 +975,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 		item.Active = activeInt != 0
 		item.HasFoto = hasFotoInt != 0
 		item.AiGenerating = aiGenInt != 0
+		item.DescriptionEnabled = descEnInt != 0
 		if categoryIDRaw.Valid {
 			v := int(categoryIDRaw.Int64)
 			item.CategoryID = &v
@@ -917,29 +1001,42 @@ func (s *Server) listPostres(r *http.Request, restaurantID int, query comidaList
 	}
 	if query.Search != "" {
 		like := "%" + query.Search + "%"
-		where = append(where, "DESCRIPCION LIKE ?")
+		if sqlDialect == sqldb.Postgres {
+			like = strings.ToLower(like) // CI LIKE port; accent folding pending
+		}
+		where = append(where, sqlFragment("DESCRIPCION LIKE ?", `LOWER("DESCRIPCION") COLLATE "C" LIKE ?`))
 		args = append(args, like)
 	}
 	if query.Alergeno != "" {
-		where = append(where, "JSON_CONTAINS(COALESCE(alergenos, JSON_ARRAY()), JSON_QUOTE(?))")
+		// alergenos is longtext: MySQL parses it as JSON (invalid text errors);
+		// PG casts to jsonb (invalid text errors too; row evaluation order may differ).
+		where = append(where, sqlFragment("JSON_CONTAINS(COALESCE(alergenos, JSON_ARRAY()), JSON_QUOTE(?))",
+			"CAST(COALESCE(alergenos, '[]') AS jsonb) @> to_jsonb(CAST(? AS text))"))
 		args = append(args, query.Alergeno)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM POSTRES WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(sqlFragment("SELECT COUNT(*) FROM POSTRES WHERE ", `SELECT COUNT(*) FROM "POSTRES" WHERE `)+whereSQL), args...).Scan(&total); err != nil {
 		return nil, nil, 0, err
 	}
 
 	offset := offsetForPage(query.Page, query.PageSize)
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment(`
 		SELECT NUM, COALESCE(DESCRIPCION, ''), alergenos, active,
 		       COALESCE(production_type, 'RAW'), stock_recipe_id, stock_item_id
 		FROM POSTRES
-		WHERE `+whereSQL+`
+		WHERE `, `
+		SELECT "NUM", COALESCE("DESCRIPCION", ''), alergenos, active,
+		       COALESCE(CAST(production_type AS text), 'RAW'), stock_recipe_id, stock_item_id
+		FROM "POSTRES"
+		WHERE `)+whereSQL+sqlFragment(`
 		ORDER BY active DESC, NUM DESC
 		LIMIT ? OFFSET ?
-	`, append(args, query.PageSize, offset)...)
+	`, `
+		ORDER BY active DESC, "NUM" DESC
+		LIMIT ? OFFSET ?
+	`)), append(args, query.PageSize, offset)...)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1008,22 +1105,28 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 	}
 	if query.Search != "" {
 		like := "%" + query.Search + "%"
-		where = append(where, "(v.nombre LIKE ? OR v.descripcion LIKE ? OR v.bodega LIKE ? OR v.denominacion_origen LIKE ? OR v.anyo LIKE ?)")
+		if sqlDialect == sqldb.Postgres {
+			like = strings.ToLower(like) // CI LIKE port; accent folding pending
+		}
+		where = append(where, sqlFragment("(v.nombre LIKE ? OR v.descripcion LIKE ? OR v.bodega LIKE ? OR v.denominacion_origen LIKE ? OR v.anyo LIKE ?)",
+			`(LOWER(v.nombre) COLLATE "C" LIKE ? OR LOWER(v.descripcion) COLLATE "C" LIKE ? OR LOWER(v.bodega) COLLATE "C" LIKE ? OR LOWER(v.denominacion_origen) COLLATE "C" LIKE ? OR LOWER(v.anyo) COLLATE "C" LIKE ?)`))
 		args = append(args, like, like, like, like, like)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM group_menu_wines_v2 v WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COUNT(*) FROM group_menu_wines_v2 v WHERE "+whereSQL), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	offset := offsetForPage(query.Page, query.PageSize)
 	// The legacy foto blob is gone from the catalogue: images are served from
 	// foto_path on the CDN, so has_foto no longer has a blob to fall back on.
-	rows, err := s.db.QueryContext(r.Context(), `
+	// Composed: reviewed fragments (num/has_foto/production_type per dialect,
+	// vinoV2From portable) + fixed where; rebound once.
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT
-			`+vinoV2NumExpr+` AS num,
+			`+vinoV2NumSQL()+` AS num,
 			COALESCE(v.tipo, ''),
 			COALESCE(v.nombre, ''),
 			COALESCE(v.precio, 0),
@@ -1033,16 +1136,16 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 			COALESCE(v.graduacion, 0),
 			COALESCE(v.anyo, ''),
 			v.active,
-			(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0) AS has_foto,
+			`+sqlFragment("(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0)", "CASE WHEN v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0 THEN 1 ELSE 0 END")+` AS has_foto,
 			COALESCE(v.foto_path, ''),
-			COALESCE(v.production_type, 'RAW'),
+			`+sqlFragment("COALESCE(v.production_type, 'RAW')", "COALESCE(CAST(v.production_type AS text), 'RAW')")+`,
 			v.stock_recipe_id,
 			v.stock_item_id
 		`+vinoV2From+`
 		WHERE `+whereSQL+`
 		ORDER BY v.active DESC, v.tipo ASC, v.nombre ASC, num ASC
 		LIMIT ? OFFSET ?
-	`, append(args, query.PageSize, offset)...)
+	`), append(args, query.PageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1172,8 +1275,9 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		fotoURL       string
 		categoryIDRaw sql.NullInt64
 		aiGenInt      int
+		descEnInt     int
 	)
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT
 			ci.id,
 			COALESCE(ci.tipo, ''),
@@ -1191,12 +1295,37 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
 			COALESCE(c.slug, ''),
-			ci.ai_generating
+			ci.ai_generating,
+			COALESCE(ci.description_enabled, 1)
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
 		WHERE ci.restaurant_id = ? AND ci.source_type = ? AND ci.id = ?
 		LIMIT 1
-	`, restaurantID, string(t), id).Scan(
+	`, `
+		SELECT
+			ci.id,
+			COALESCE(ci.tipo, ''),
+			COALESCE(ci.nombre, ''),
+			COALESCE(ci.precio, 0),
+			COALESCE(ci.descripcion, ''),
+			COALESCE(ci.titulo, ''),
+			COALESCE(ci.suplemento, 0),
+			CAST(ci.alergenos_json AS text),
+			ci.active,
+			CASE WHEN (ci.foto_path IS NOT NULL AND LENGTH(ci.foto_path) > 0) OR ci.foto IS NOT NULL OR ci.foto_url IS NOT NULL THEN 1 ELSE 0 END AS has_foto,
+			ci.foto_path,
+			ci.foto,
+			COALESCE(ci.foto_url, ''),
+			COALESCE(ci.categoria, ''),
+			ci.category_id,
+			COALESCE(c.slug, ''),
+			ci.ai_generating,
+			COALESCE(ci.description_enabled, 1)
+		FROM comida_items ci
+		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
+		WHERE ci.restaurant_id = ? AND ci.source_type = ? AND ci.id = ?
+		LIMIT 1
+	`), restaurantID, string(t), id).Scan(
 		&item.Num,
 		&item.Tipo,
 		&item.Nombre,
@@ -1214,6 +1343,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		&categoryIDRaw,
 		&item.CategorySlug,
 		&aiGenInt,
+		&descEnInt,
 	)
 	if err == sql.ErrNoRows {
 		return comidaItemResponse{}, false, nil
@@ -1227,6 +1357,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 	item.Active = activeInt != 0
 	item.HasFoto = hasFotoInt != 0
 	item.AiGenerating = aiGenInt != 0
+	item.DescriptionEnabled = descEnInt != 0
 	if categoryIDRaw.Valid {
 		v := int(categoryIDRaw.Int64)
 		item.CategoryID = &v
@@ -1249,12 +1380,17 @@ func (s *Server) getPostreByID(r *http.Request, restaurantID int, id int) (comid
 		alergRaw  sql.NullString
 		activeInt int
 	)
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT COALESCE(DESCRIPCION, ''), alergenos, active
 		FROM POSTRES
 		WHERE restaurant_id = ? AND NUM = ?
 		LIMIT 1
-	`, restaurantID, id).Scan(&desc, &alergRaw, &activeInt)
+	`, `
+		SELECT COALESCE("DESCRIPCION", ''), alergenos, active
+		FROM "POSTRES"
+		WHERE restaurant_id = ? AND "NUM" = ?
+		LIMIT 1
+	`), restaurantID, id).Scan(&desc, &alergRaw, &activeInt)
 	if err == sql.ErrNoRows {
 		return comidaItemResponse{}, comidaPostreResponse{}, false, nil
 	}
@@ -1293,9 +1429,9 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 		detailStockItemRaw sql.NullInt64
 	)
 	// No legacy foto blob: the catalogue only stores the CDN path.
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT
-			`+vinoV2NumExpr+` AS num,
+			`+vinoV2NumSQL()+` AS num,
 			COALESCE(v.tipo, ''),
 			COALESCE(v.nombre, ''),
 			COALESCE(v.precio, 0),
@@ -1305,15 +1441,15 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 			COALESCE(v.graduacion, 0),
 			COALESCE(v.anyo, ''),
 			v.active,
-			(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0) AS has_foto,
+			`+sqlFragment("(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0)", "CASE WHEN v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0 THEN 1 ELSE 0 END")+` AS has_foto,
 			v.foto_path,
-			COALESCE(v.production_type, 'RAW'),
+			`+sqlFragment("COALESCE(v.production_type, 'RAW')", "COALESCE(CAST(v.production_type AS text), 'RAW')")+`,
 			v.stock_recipe_id,
 			v.stock_item_id
 		`+vinoV2From+`
 		WHERE `+vinoV2WhereLegacyNumJoined+`
 		LIMIT 1
-	`, vinoV2LegacyNumArgs(restaurantID, id)...).Scan(
+	`), vinoV2LegacyNumArgs(restaurantID, id)...).Scan(
 		&v.Num,
 		&v.Tipo,
 		&v.Nombre,
@@ -1373,7 +1509,9 @@ func (s *Server) handleComidaCreateByType(w http.ResponseWriter, r *http.Request
 
 	var req comidaUpsertRequest
 	if err := readJSONBody(r, &req); err != nil {
-		writeComidaValidationError(w, "Invalid JSON")
+		// wa_bot_flexible_types_v1: name the offending field so a model-built
+		// body can be corrected instead of retried blindly.
+		writeComidaValidationError(w, "Invalid JSON: "+err.Error())
 		return
 	}
 
@@ -1470,26 +1608,15 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		return
 	}
 
-	res, err := q.ExecContext(r.Context(), `
+	newID, err := sqldb.InsertID(r.Context(), sqlDialect, q, nativeSQL(`
 		INSERT INTO comida_items
-			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULLIF(?, ''))
-	`, restaurantID,
-		string(t),
-		nombre,
-		strings.ToUpper(strings.TrimSpace(comidaPtrString(req.Tipo))),
-		categoria,
-		categoryID,
-		strings.TrimSpace(comidaPtrString(req.Titulo)),
-		precio,
-		suplemento,
-		strings.TrimSpace(comidaPtrString(req.Descripcion)),
-		string(alergJSON),
-		activeInt,
-		foto,
-		aiGenVal,
-		uiDataID,
-	)
+			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, description_enabled, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULLIF(?, ''))
+	`, `
+		INSERT INTO comida_items
+			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, description_enabled, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, NULL, ?, ?, NULLIF(CAST(? AS text), ''))
+	`), "id", restaurantID, string(t), nombre, strings.ToUpper(strings.TrimSpace(comidaPtrString(req.Tipo))), categoria, categoryID, strings.TrimSpace(comidaPtrString(req.Titulo)), precio, suplemento, strings.TrimSpace(comidaPtrString(req.Descripcion)), boolToTinyint(req.DescriptionEnabled == nil || *req.DescriptionEnabled), string(alergJSON), activeInt, foto, aiGenVal, uiDataID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
 		return
@@ -1500,7 +1627,6 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 			return
 		}
 	}
-	newID, _ := res.LastInsertId()
 	item, _, err := s.getCatalogItemByID(r, restaurantID, t, int(newID))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
@@ -1529,15 +1655,17 @@ func (s *Server) createPostre(w http.ResponseWriter, r *http.Request, restaurant
 	if req.Alergenos != nil {
 		alergJSON, _ = json.Marshal(*req.Alergenos)
 	}
-	res, err := s.db.ExecContext(r.Context(), `
+	newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`
 		INSERT INTO POSTRES (restaurant_id, DESCRIPCION, alergenos, active)
 		VALUES (?, ?, ?, ?)
-	`, restaurantID, desc, string(alergJSON), activeInt)
+	`, `
+		INSERT INTO "POSTRES" (restaurant_id, "DESCRIPCION", alergenos, active)
+		VALUES (?, ?, ?, ?)
+	`), `"NUM"`, restaurantID, desc, string(alergJSON), activeInt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando postre")
 		return
 	}
-	newID, _ := res.LastInsertId()
 	item, postre, _, err := s.getPostreByID(r, restaurantID, int(newID))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando postre")
@@ -1598,7 +1726,7 @@ func (s *Server) createVino(w http.ResponseWriter, r *http.Request, restaurantID
 		if err != nil {
 			warning = "Vino creado, pero la imagen no se pudo subir"
 		} else {
-			if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, int(newID))...)...); err != nil {
+			if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum), append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, int(newID))...)...); err != nil {
 				warning = "Vino creado, pero la imagen no se pudo guardar"
 			}
 		}
@@ -1635,7 +1763,9 @@ func (s *Server) handleComidaPatchByType(w http.ResponseWriter, r *http.Request,
 	}
 	var req comidaUpsertRequest
 	if err := readJSONBody(r, &req); err != nil {
-		writeComidaValidationError(w, "Invalid JSON")
+		// wa_bot_flexible_types_v1: name the offending field so a model-built
+		// body can be corrected instead of retried blindly.
+		writeComidaValidationError(w, "Invalid JSON: "+err.Error())
 		return
 	}
 
@@ -1707,6 +1837,10 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 		sets = append(sets, "ai_generating = ?")
 		args = append(args, aiGenVal)
 	}
+	if req.DescriptionEnabled != nil {
+		sets = append(sets, "description_enabled = ?")
+		args = append(args, boolToTinyint(*req.DescriptionEnabled))
+	}
 	if req.ImageBase64 != nil {
 		raw := strings.TrimSpace(*req.ImageBase64)
 		if raw == "" {
@@ -1769,7 +1903,19 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 
 	args = append(args, id, restaurantID, string(t))
 	updateQuery := "UPDATE comida_items SET " + strings.Join(sets, ", ") + " WHERE id = ? AND restaurant_id = ? AND source_type = ?"
-	res, err := q.ExecContext(r.Context(), updateQuery, args...)
+	// MySQL RowsAffected = changed rows (unchanged save -> "Elemento no
+	// encontrado", source behaviour); PG appends the same-columns predicate.
+	execArgs := args
+	if sqlDialect == sqldb.Postgres {
+		pred, extra, ok := pgChangedRowsPredicate(sets, args[:len(args)-3], comidaItemsPGTypes)
+		if !ok {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando comida")
+			return
+		}
+		updateQuery += pred
+		execArgs = append(append([]any{}, args...), extra...)
+	}
+	res, err := q.ExecContext(r.Context(), portableSQL(updateQuery), execArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando comida")
 		return
@@ -1810,7 +1956,7 @@ func (s *Server) patchPostre(w http.ResponseWriter, r *http.Request, restaurantI
 			value = req.Nombre
 		}
 		desc := strings.TrimSpace(*value)
-		sets = append(sets, "DESCRIPCION = ?")
+		sets = append(sets, sqlFragment("DESCRIPCION = ?", `"DESCRIPCION" = ?`))
 		args = append(args, desc)
 	}
 	if req.Alergenos != nil {
@@ -1832,8 +1978,18 @@ func (s *Server) patchPostre(w http.ResponseWriter, r *http.Request, restaurantI
 	}
 
 	args = append(args, id, restaurantID)
-	q := "UPDATE POSTRES SET " + strings.Join(sets, ", ") + " WHERE NUM = ? AND restaurant_id = ?"
-	res, err := s.db.ExecContext(r.Context(), q, args...)
+	q := sqlFragment("UPDATE POSTRES SET ", `UPDATE "POSTRES" SET `) + strings.Join(sets, ", ") + sqlFragment(" WHERE NUM = ? AND restaurant_id = ?", ` WHERE "NUM" = ? AND restaurant_id = ?`)
+	execArgs := args
+	if sqlDialect == sqldb.Postgres { // changed-rows contract (RowsAffected==0 gate)
+		pred, extra, ok := pgChangedRowsPredicate(sets, args[:len(args)-2], postresPGTypes)
+		if !ok {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando postre")
+			return
+		}
+		q += pred
+		execArgs = append(append([]any{}, args...), extra...)
+	}
+	res, err := s.db.ExecContext(r.Context(), portableSQL(q), execArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando postre")
 		return
@@ -1924,7 +2080,7 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 			}
 			wineTipo := strings.ToUpper(strings.TrimSpace(comidaPtrString(req.Tipo)))
 			if wineTipo == "" {
-				if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(restaurantID, id)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
+				if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1"), vinoV2LegacyNumArgs(restaurantID, id)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
 					wineTipo = "OTROS"
 				}
 			}
@@ -1945,7 +2101,17 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 
 	args = append(args, vinoV2LegacyNumArgs(restaurantID, id)...)
 	q := "UPDATE group_menu_wines_v2 SET " + strings.Join(sets, ", ") + " WHERE " + vinoV2WhereLegacyNum
-	res, err := s.db.ExecContext(r.Context(), q, args...)
+	execArgs := args
+	if sqlDialect == sqldb.Postgres { // changed-rows contract (RowsAffected==0 gate)
+		pred, extra, ok := pgChangedRowsPredicate(sets, args[:len(args)-3], winesV2PGTypes)
+		if !ok {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando vino")
+			return
+		}
+		q += pred
+		execArgs = append(append([]any{}, args...), extra...)
+	}
+	res, err := s.db.ExecContext(r.Context(), portableSQL(q), execArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando vino")
 		return
@@ -1999,9 +2165,9 @@ func (s *Server) handleComidaDeleteByType(w http.ResponseWriter, r *http.Request
 	} else {
 		var res sql.Result
 		if t == comidaTipoPostres {
-			res, err = s.db.ExecContext(r.Context(), "DELETE FROM POSTRES WHERE NUM = ? AND restaurant_id = ?", id, restaurantID)
+			res, err = s.db.ExecContext(r.Context(), nativeSQL("DELETE FROM POSTRES WHERE NUM = ? AND restaurant_id = ?", `DELETE FROM "POSTRES" WHERE "NUM" = ? AND restaurant_id = ?`), id, restaurantID)
 		} else {
-			res, err = s.db.ExecContext(r.Context(), "DELETE FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?", id, restaurantID, string(t))
+			res, err = s.db.ExecContext(r.Context(), portableSQL("DELETE FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?"), id, restaurantID, string(t))
 		}
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando comida")
@@ -2091,12 +2257,12 @@ func (s *Server) handleBOCatalogToggle(w http.ResponseWriter, r *http.Request, t
 	}
 
 	var current int
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT active
 		FROM comida_items
 		WHERE restaurant_id = ? AND source_type = ? AND id = ?
 		LIMIT 1
-	`, restaurantID, string(t), id).Scan(&current); err != nil {
+	`), restaurantID, string(t), id).Scan(&current); err != nil {
 		if err == sql.ErrNoRows {
 			writeComidaValidationError(w, "Elemento no encontrado")
 			return
@@ -2109,11 +2275,11 @@ func (s *Server) handleBOCatalogToggle(w http.ResponseWriter, r *http.Request, t
 	if current != 0 {
 		next = 0
 	}
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE comida_items
 		SET active = ?
 		WHERE restaurant_id = ? AND source_type = ? AND id = ?
-	`, next, restaurantID, string(t), id); err != nil {
+	`), next, restaurantID, string(t), id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando estado")
 		return
 	}
@@ -2136,14 +2302,14 @@ func (s *Server) handleBOComidaBebidaCategoriesList(w http.ResponseWriter, r *ht
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_bebida_categories
 		WHERE restaurant_id = ? AND active = 1
 		ORDER BY
 			CASE WHEN source = 'base' THEN 0 ELSE 1 END,
 			name ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
 		return
@@ -2207,19 +2373,28 @@ func (s *Server) handleBOComidaBebidaCategoriesCreate(w http.ResponseWriter, r *
 		return
 	}
 
-	res, err := tx.ExecContext(r.Context(), `
+	// PG: RETURNING the id only when a row was INSERTED (xmax = 0) and 0 on the
+	// ON CONFLICT update path, so the source's id>0 / slug-or-name lookup fallback
+	// is taken exactly as written. Equal to MySQL iff its OK-packet insert id is 0
+	// on the ODKU update/no-change path: NOT established without a server run
+	// (pending, see native-ledger-catalog.json).
+	id64, err := sqldb.InsertID(r.Context(), sqlDialect, tx, nativeSQL(`
 		INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
 		VALUES (?, ?, ?, 'custom', 1)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			active = 1
-	`, restaurantID, name, slug)
+	`, `
+		INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
+		VALUES (?, ?, ?, 'custom', 1)
+		ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET
+			name = EXCLUDED.name,
+			active = 1
+	`), "CASE WHEN xmax = 0 THEN id ELSE 0 END", restaurantID, name, slug)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
-
-	id64, _ := res.LastInsertId()
 	category := comidaCategoryResponse{
 		Name:   name,
 		Slug:   slug,
@@ -2266,11 +2441,15 @@ func (s *Server) handleBOComidaBebidaCategoriesCheck(w http.ResponseWriter, r *h
 	slug := slugifyCategoryName(name)
 
 	var count int
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT COUNT(*)
 		FROM comida_bebida_categories
 		WHERE restaurant_id = ? AND active = 1 AND (slug = ? OR LOWER(name) = LOWER(?))
-	`, restaurantID, slug, name).Scan(&count)
+	`, `
+		SELECT COUNT(*)
+		FROM comida_bebida_categories
+		WHERE restaurant_id = ? AND active = 1 AND (app.norm_ascii(slug) = app.norm_ascii(?) OR LOWER(name) = LOWER(?))
+	`), restaurantID, slug, name).Scan(&count)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error verificando categoria")
 		return
@@ -2301,12 +2480,17 @@ func getBebidaCategoryBySlugOrName(r *http.Request, q comidaCategoryDB, restaura
 	slug := slugifyCategoryName(raw)
 	var c comidaCategoryResponse
 	var activeInt int
-	err := q.QueryRowContext(r.Context(), `
+	err := q.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_bebida_categories
 		WHERE restaurant_id = ? AND (slug = ? OR LOWER(name) = LOWER(?))
 		LIMIT 1
-	`, restaurantID, slug, raw).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
+	`, `
+		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
+		FROM comida_bebida_categories
+		WHERE restaurant_id = ? AND (app.norm_ascii(slug) = app.norm_ascii(?) OR LOWER(name) = LOWER(?))
+		LIMIT 1
+	`), restaurantID, slug, raw).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
 	if err == sql.ErrNoRows {
 		return comidaCategoryResponse{}, false, nil
 	}
@@ -2315,4 +2499,19 @@ func getBebidaCategoryBySlugOrName(r *http.Request, q comidaCategoryDB, restaura
 	}
 	c.Active = activeInt != 0
 	return c, true, nil
+}
+
+// PG column types for pgChangedRowsPredicate (plan.sql); "text" = byte compare.
+var comidaItemsPGTypes = map[string]string{
+	"tipo": "text", "nombre": "text", "descripcion": "text", "titulo": "text", "categoria": "text", "foto_path": "text",
+	"precio": "numeric(10,2)", "suplemento": "numeric(10,2)", "alergenos_json": "jsonb",
+	"active": "smallint", "ai_generating": "smallint", "description_enabled": "smallint",
+	"foto": "bytea", "category_id": "integer",
+}
+
+var postresPGTypes = map[string]string{"DESCRIPCION": "text", "alergenos": "text", "active": "smallint"}
+
+var winesV2PGTypes = map[string]string{
+	"tipo": "text", "nombre": "text", "descripcion": "text", "bodega": "text", "denominacion_origen": "text", "anyo": "text", "foto_path": "text",
+	"precio": "real", "graduacion": "numeric(5,1)", "active": "smallint",
 }

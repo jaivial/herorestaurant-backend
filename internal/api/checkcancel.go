@@ -112,7 +112,8 @@ func (s *Server) handleCheckCancel(w http.ResponseWriter, r *http.Request) {
 		commentary   sql.NullString
 	)
 
-	err = s.db.QueryRowContext(r.Context(), `
+	ccLike := any("%" + searchName + "%")
+	err = s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT
 			id, customer_name, contact_email, reservation_date,
 			reservation_time, party_size, contact_phone,
@@ -125,7 +126,20 @@ func (s *Server) handleCheckCancel(w http.ResponseWriter, r *http.Request) {
 		  AND party_size = ?
 		  AND LOWER(TRIM(customer_name)) LIKE ?
 		LIMIT 1
-	`, restaurantID, resDate, resTime, partySize, "%"+searchName+"%").Scan(
+	`, `
+		SELECT
+			id, customer_name, contact_email, reservation_date,
+			reservation_time, party_size, contact_phone,
+			"babyStrollers", "highChairs", arroz_type, arroz_servings,
+			status, commentary
+		FROM bookings
+		WHERE restaurant_id = ?
+		  AND reservation_date = ?
+		  AND reservation_time = ?
+		  AND party_size = ?
+		  AND LOWER(TRIM(customer_name)) COLLATE "C" LIKE ?
+		LIMIT 1
+	`), restaurantID, resDate, resTime, partySize, ccLike).Scan(
 		&id, &customerName, &contactEmail, &dateVal,
 		&timeVal, &ps, &contactPhone,
 		&baby, &high, &arrozType, &arrozServs,

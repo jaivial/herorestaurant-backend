@@ -20,6 +20,9 @@ import (
 )
 
 // chromeExecPath returns the path to a Chrome/Chromium binary, or "" if none.
+//
+// The production image ships no browser (render_document uses WeasyPrint), so
+// invoices keep the native Go PDF. This only finds a browser on a dev machine.
 func chromeExecPath() string {
 	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
 		if p, err := exec.LookPath(name); err == nil {

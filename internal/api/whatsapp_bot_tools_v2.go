@@ -86,7 +86,7 @@ func (s *Server) botToolDateOverview(ctx context.Context, restaurantID int, inpu
 		out["whatsapp_booking_allowed"] = !botIsSameDay(dateISO)
 	}
 	var mobility int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(mobility_enabled,0) FROM mobility_day_override WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1`, restaurantID, dateISO).Scan(&mobility); err == nil {
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT COALESCE(mobility_enabled,0) FROM mobility_day_override WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1`, `SELECT COALESCE(mobility_enabled,0) FROM mobility_day_override WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, dateISO).Scan(&mobility); err == nil {
 		out["asks_mobility"] = mobility != 0
 	}
 	return botJSON(out), nil
@@ -141,7 +141,7 @@ func (s *Server) botToolAddBookingNote(ctx context.Context, restaurantID int, ms
 		return botJSON(map[string]any{"error": "reserva especial/evento: los detalles se acuerdan con la gestión del restaurante (usa send_contact)"}), nil
 	}
 	note := "[WhatsApp " + time.Now().In(boMadridTZ).Format("02/01") + "] " + truncate(strings.TrimSpace(in.Note), 300)
-	res, err := s.db.ExecContext(ctx, `UPDATE bookings SET commentary = TRIM(CONCAT(COALESCE(commentary,''), IF(COALESCE(commentary,'')='', '', '\n'), ?)) WHERE restaurant_id = ? AND id = ?`, note, restaurantID, in.BookingID)
+	res, err := s.db.ExecContext(ctx, nativeSQL(`UPDATE bookings SET commentary = TRIM(CONCAT(COALESCE(commentary,''), IF(COALESCE(commentary,'')='', '', '\n'), ?)) WHERE restaurant_id = ? AND id = ?`, `UPDATE bookings SET commentary = trim(COALESCE(commentary,'') || CASE WHEN COALESCE(commentary,'') = '' THEN '' ELSE chr(10) END || CAST(? AS text)) WHERE restaurant_id = ? AND id = ?`), note, restaurantID, in.BookingID)
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo guardar la nota"}), nil
 	}

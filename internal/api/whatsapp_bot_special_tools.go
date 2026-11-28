@@ -75,10 +75,12 @@ func (s *Server) botToolGetSpecialDateInfo(ctx context.Context, restaurantID int
 		menuPayload = append(menuPayload, entry)
 	}
 	payload := map[string]any{
-		"date":                     date,
-		"title":                    settings.Title,
-		"is_active":                settings.IsActive,
-		"prereserva_enabled":       settings.PrereservaEnabled,
+		"date":               date,
+		"title":              settings.Title,
+		"is_active":          settings.IsActive,
+		"prereserva_enabled": settings.PrereservaEnabled,
+		// Coordination id: special_date_whatsapp_only_v1
+		"whatsapp_only":            settings.WhatsAppOnly,
 		"requires_adelanto":        settings.RequiresAdelanto,
 		"adelanto_payment_methods": settings.AdelantoPaymentMethods,
 		"adelanto_unified":         settings.AdelantoUnified,
@@ -108,7 +110,7 @@ func (s *Server) botToolGetSpecialDateBookings(ctx context.Context, restaurantID
 		return botJSON(map[string]any{"error": "fecha inválida; usa YYYY-MM-DD o dd/MM/yyyy"}), nil
 	}
 	query := `
-		SELECT id, customer_name, TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
+		SELECT id, customer_name, ` + sqlFragment("TIME_FORMAT(reservation_time, '%H:%i:%s')", "to_char(reservation_time, 'HH24:MI:SS')") + ` AS reservation_time,
 		       party_size, COALESCE(is_special_booking, 0), COALESCE(is_prereserva, 0), COALESCE(special_json, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ? AND COALESCE(is_special_booking, 0) = 1
@@ -117,11 +119,11 @@ func (s *Server) botToolGetSpecialDateBookings(ctx context.Context, restaurantID
 	// Optional phone filter: match the stored national or international form.
 	if p := botGroupParticipantPhone(in.Phone); p != "" {
 		national, digits := botPhoneVariants(p)
-		query += ` AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)`
+		query += sqlFragment(` AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)`, ` AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)`)
 		args = append(args, national, digits, digits)
 	}
 	query += ` ORDER BY reservation_time ASC, id ASC`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), args...)
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo consultar las reservas especiales"}), nil
 	}

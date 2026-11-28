@@ -1,0 +1,1 @@
+{"customer_name": "QA Cliente", "customer_email": "qa-invoice@invalid.local", "invoice_date": "2026-11-13", "amount": 24.2, "status": "pendiente", "is_reservation": false, "reservation_date": "2026-11-20", "reservation_party_size": 4, "invoice_number": "QA-INV-ÁB-1", "iva_rate": 21, "subtotal": 20, "iva_amount": 4.2, "total": 24.2}

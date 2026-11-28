@@ -30,12 +30,17 @@ func isValidLegalSlug(slug string) bool {
 // Returns sql.ErrNoRows if the row does not exist.
 func (s *Server) fetchLegalPage(r *http.Request, restaurantID int, slug string) (LegalPage, error) {
 	page := LegalPage{Slug: slug}
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT title, content_json, content_html, updated_at
 		FROM legal_pages
 		WHERE restaurant_id = ? AND slug = ?
 		LIMIT 1
-	`, restaurantID, slug).Scan(&page.Title, &page.ContentJSON, &page.ContentHTML, &page.UpdatedAt)
+	`, `
+		SELECT title, content_json, content_html, updated_at
+		FROM legal_pages
+		WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?)
+		LIMIT 1
+	`), restaurantID, slug).Scan(&page.Title, &page.ContentJSON, &page.ContentHTML, &page.UpdatedAt)
 	return page, err
 }
 
@@ -83,13 +88,13 @@ func (s *Server) handleAdminLegalPageList(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT lp.slug, lp.title, lp.updated_at, COALESCE(u.name, u.email, '') AS updated_by_name
 		FROM legal_pages lp
 		LEFT JOIN bo_users u ON u.id = lp.updated_by_user_id
 		WHERE lp.restaurant_id = ?
 		ORDER BY lp.slug
-	`, a.ActiveRestaurantID)
+	`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando las páginas legales")
 		return
@@ -181,7 +186,7 @@ func (s *Server) handleAdminLegalPageUpsert(w http.ResponseWriter, r *http.Reque
 		contentJSON = "[]"
 	}
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO legal_pages (restaurant_id, slug, title, content_json, content_html, updated_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
@@ -189,7 +194,15 @@ func (s *Server) handleAdminLegalPageUpsert(w http.ResponseWriter, r *http.Reque
 			content_json = VALUES(content_json),
 			content_html = VALUES(content_html),
 			updated_by_user_id = VALUES(updated_by_user_id)
-	`, a.ActiveRestaurantID, slug, title, contentJSON, req.ContentHTML, a.User.ID)
+	`, `
+		INSERT INTO legal_pages (restaurant_id, slug, title, content_json, content_html, updated_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET
+			title = EXCLUDED.title,
+			content_json = EXCLUDED.content_json,
+			content_html = EXCLUDED.content_html,
+			updated_by_user_id = EXCLUDED.updated_by_user_id
+	`), a.ActiveRestaurantID, slug, title, contentJSON, req.ContentHTML, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando la página legal")
 		return

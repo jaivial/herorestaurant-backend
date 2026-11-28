@@ -99,10 +99,13 @@ func (s *Server) handleEditOpeningHours(w http.ResponseWriter, r *http.Request) 
 
 	hoursJSON, _ := json.Marshal(input.Hours)
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO openinghours (restaurant_id, dateselected, hoursarray) VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE hoursarray = VALUES(hoursarray)
-	`, restaurantID, date, string(hoursJSON))
+	`, `
+		INSERT INTO openinghours (restaurant_id, dateselected, hoursarray) VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_id, dateselected) DO UPDATE SET hoursarray = EXCLUDED.hoursarray
+	`), restaurantID, date, string(hoursJSON))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -112,7 +115,7 @@ func (s *Server) handleEditOpeningHours(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Keep hour_configuration in sync (legacy behavior).
-	_, _ = s.db.ExecContext(r.Context(), "DELETE FROM hour_configuration WHERE restaurant_id = ? AND date = ?", restaurantID, date)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL("DELETE FROM hour_configuration WHERE restaurant_id = ? AND date = ?"), restaurantID, date)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

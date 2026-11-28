@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Steps are the "Receta" tab: an ordered, gap-free list a cook reads by number.
@@ -39,22 +40,21 @@ func (s *Server) handleBOTechnicalSheetStepCreate(w http.ResponseWriter, r *http
 
 	var count int
 	s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM stock_recipe_steps WHERE restaurant_id=? AND recipe_id=?`,
+		portableSQL(`SELECT COUNT(*) FROM stock_recipe_steps WHERE restaurant_id=? AND recipe_id=?`),
 		a.ActiveRestaurantID, sheetID).Scan(&count)
 	if count >= maxSheetSteps {
 		httpx.WriteError(w, http.StatusBadRequest, "Demasiados pasos en esta ficha")
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	stepID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO stock_recipe_steps (restaurant_id,recipe_id,step_no,title,description)
-		VALUES (?,?,?,?,?)`,
+		VALUES (?,?,?,?,?)`), "id",
 		a.ActiveRestaurantID, sheetID, count+1, in.Title, in.Description)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo crear el paso")
 		return
 	}
-	stepID, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "stepId": stepID, "stepNo": count + 1})
 }
 
@@ -71,10 +71,22 @@ func (s *Server) handleBOTechnicalSheetStepPatch(w http.ResponseWriter, r *http.
 		httpx.WriteError(w, http.StatusBadRequest, "Datos invalidos")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `
+	// RowsAffected contract (no clientFoundRows): MySQL reports CHANGED rows, so a
+	// same-value update answers 404 here. PG reports matched rows, so its branch
+	// only updates when the tuple really changes: a byte-wise (COLLATE "C")
+	// IS DISTINCT FROM, like MySQL's changed-record check (old-nondeterministic-collation would treat a
+	// case-only edit as unchanged). No write means no updated_at trigger, as in
+	// MySQL. Values are bound once through VALUES, in the original order.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE stock_recipe_steps
 		   SET title=COALESCE(?,title), description=COALESCE(?,description)
-		 WHERE restaurant_id=? AND id=? AND recipe_id=?`,
+		 WHERE restaurant_id=? AND id=? AND recipe_id=?`, `
+		UPDATE stock_recipe_steps t
+		   SET title=COALESCE(v.ti, t.title), description=COALESCE(v.de, t.description)
+		  FROM (VALUES (CAST(? AS text), CAST(? AS text))) AS v(ti, de)
+		 WHERE t.restaurant_id=? AND t.id=? AND t.recipe_id=?
+		   AND (t.title COLLATE "C", t.description COLLATE "C")
+		       IS DISTINCT FROM (COALESCE(v.ti, t.title) COLLATE "C", COALESCE(v.de, t.description) COLLATE "C")`),
 		in.Title, in.Description, a.ActiveRestaurantID, stepID, sheetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando el paso")
@@ -101,22 +113,37 @@ func (s *Server) handleBOTechnicalSheetStepDelete(w http.ResponseWriter, r *http
 
 	var stepNo int
 	if err := tx.QueryRowContext(r.Context(),
-		`SELECT step_no FROM stock_recipe_steps WHERE restaurant_id=? AND id=? AND recipe_id=? FOR UPDATE`,
+		portableSQL(`SELECT step_no FROM stock_recipe_steps WHERE restaurant_id=? AND id=? AND recipe_id=? FOR UPDATE`),
 		a.ActiveRestaurantID, stepID, sheetID).Scan(&stepNo); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Paso no encontrado")
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(),
-		`DELETE FROM stock_recipe_steps WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, stepID); err != nil {
+		portableSQL(`DELETE FROM stock_recipe_steps WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, stepID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando el paso")
 		return
 	}
 	// Close the hole in the same transaction: a sheet that shows "1, 3, 4" for
 	// even a moment is a real kitchen error, not a cosmetic one.
-	if _, err := tx.ExecContext(r.Context(), `
+	if sqlDialect == sqldb.Postgres {
+		// PG has no UPDATE ... ORDER BY and checks uq_stock_recipe_step_no per
+		// row, so the MySQL ordered shift could collide. Same park technique as
+		// the reorder below (CHECK step_no > 0 forbids negatives): park every
+		// later step above stepReorderParkOffset, then bring it down by offset+1.
+		if _, err := tx.ExecContext(r.Context(), pgOnlySQL(`UPDATE stock_recipe_steps SET step_no=step_no+?
+		 WHERE restaurant_id=? AND recipe_id=? AND step_no>?`), stepReorderParkOffset, a.ActiveRestaurantID, sheetID, stepNo); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error renumerando los pasos")
+			return
+		}
+		if _, err := tx.ExecContext(r.Context(), pgOnlySQL(`UPDATE stock_recipe_steps SET step_no=step_no-?-1
+		 WHERE restaurant_id=? AND recipe_id=? AND step_no>?`), stepReorderParkOffset, a.ActiveRestaurantID, sheetID, stepReorderParkOffset); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error renumerando los pasos")
+			return
+		}
+	} else if _, err := tx.ExecContext(r.Context(), mysqlOnlySQL(`
 		UPDATE stock_recipe_steps SET step_no=step_no-1
 		 WHERE restaurant_id=? AND recipe_id=? AND step_no>?
-		 ORDER BY step_no`, a.ActiveRestaurantID, sheetID, stepNo); err != nil {
+		 ORDER BY step_no`), a.ActiveRestaurantID, sheetID, stepNo); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error renumerando los pasos")
 		return
 	}
@@ -147,7 +174,7 @@ func (s *Server) handleBOTechnicalSheetStepsReorder(w http.ResponseWriter, r *ht
 	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(r.Context(),
-		`SELECT id FROM stock_recipe_steps WHERE restaurant_id=? AND recipe_id=? FOR UPDATE`,
+		portableSQL(`SELECT id FROM stock_recipe_steps WHERE restaurant_id=? AND recipe_id=? FOR UPDATE`),
 		a.ActiveRestaurantID, sheetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reordenando")
@@ -186,7 +213,7 @@ func (s *Server) handleBOTechnicalSheetStepsReorder(w http.ResponseWriter, r *ht
 	// far beyond maxSheetSteps, so parked and final values can never collide.
 	for _, id := range in.StepIDs {
 		if _, err := tx.ExecContext(r.Context(),
-			`UPDATE stock_recipe_steps SET step_no=step_no+? WHERE restaurant_id=? AND id=?`,
+			portableSQL(`UPDATE stock_recipe_steps SET step_no=step_no+? WHERE restaurant_id=? AND id=?`),
 			stepReorderParkOffset, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reordenando")
 			return
@@ -194,7 +221,7 @@ func (s *Server) handleBOTechnicalSheetStepsReorder(w http.ResponseWriter, r *ht
 	}
 	for index, id := range in.StepIDs {
 		if _, err := tx.ExecContext(r.Context(),
-			`UPDATE stock_recipe_steps SET step_no=? WHERE restaurant_id=? AND id=?`,
+			portableSQL(`UPDATE stock_recipe_steps SET step_no=? WHERE restaurant_id=? AND id=?`),
 			index+1, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reordenando")
 			return
@@ -210,11 +237,11 @@ func (s *Server) handleBOTechnicalSheetStepsReorder(w http.ResponseWriter, r *ht
 func (s *Server) handleBOTechnicalSheetStepsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	sheetID := sheetIDParam(r)
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, step_no, COALESCE(title,''), COALESCE(description,''), COALESCE(image_url,''),
 		       generation_status, generation_mode, COALESCE(generation_error,'')
 		  FROM stock_recipe_steps
-		 WHERE restaurant_id=? AND recipe_id=? ORDER BY step_no`, a.ActiveRestaurantID, sheetID)
+		 WHERE restaurant_id=? AND recipe_id=? ORDER BY step_no`), a.ActiveRestaurantID, sheetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando pasos")
 		return

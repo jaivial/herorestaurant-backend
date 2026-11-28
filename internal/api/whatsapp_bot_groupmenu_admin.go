@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 )
 
@@ -103,7 +104,7 @@ type botGMenuQuerier interface {
 // restaurant. Price is informational for the preview.
 func (s *Server) botGMenuFetchMenu(ctx context.Context, q botGMenuQuerier, rid, menuID int) (title, principalesRaw, price string, err error) {
 	var p sql.NullString
-	err = q.QueryRowContext(ctx, `SELECT menu_title, principales, COALESCE(price,'') FROM menus WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1`, rid, menuID).Scan(&title, &p, &price)
+	err = q.QueryRowContext(ctx, nativeSQL(`SELECT menu_title, principales, COALESCE(price,'') FROM menus WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1`, `SELECT menu_title, principales, COALESCE(CAST(price AS text),'') FROM menus WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1`), rid, menuID).Scan(&title, &p, &price)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -238,7 +239,25 @@ func (s *Server) botGMenuResolve(ctx context.Context, q botGMenuQuerier, rid int
 	}
 	if cur.GroupMenu && cur.MenuID > 0 && cur.MenuID != in.MenuDeGrupoID {
 		var oldTitle string
-		if q.QueryRowContext(ctx, `SELECT menu_title FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1`, rid, cur.MenuID).Scan(&oldTitle) == nil && strings.TrimSpace(oldTitle) != "" {
+		read := func() error {
+			return q.QueryRowContext(ctx, portableSQL(`SELECT menu_title FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1`), rid, cur.MenuID).Scan(&oldTitle)
+		}
+		// The source falls back on ANY error and keeps going; when q is the
+		// claim tx the PG read runs in a savepoint so it cannot abort the tx
+		// (ErrNoRows is not a statement error).
+		var rerr error
+		if tx, ok := q.(*sql.Tx); ok {
+			_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+				rerr = read()
+				if errors.Is(rerr, sql.ErrNoRows) {
+					return nil
+				}
+				return rerr
+			})
+		} else {
+			rerr = read()
+		}
+		if rerr == nil && strings.TrimSpace(oldTitle) != "" {
 			r.OldMenuTitle = oldTitle
 		} else {
 			r.OldMenuTitle = "(menú actual no disponible)"
@@ -364,7 +383,7 @@ func (s *Server) botGMenuPropose(ctx context.Context, rid int, msg botWebhookMes
 	if row.Special {
 		return botJSON(map[string]any{"error": "la reserva es de fecha especial: sus menús van en el bloque especial y se cambian desde el panel"}), nil
 	}
-	cur, cerr := botGMenuScanCurrent(s.db.QueryRowContext(ctx, botGMenuCurrentSelect, rid, bookingID))
+	cur, cerr := botGMenuScanCurrent(s.db.QueryRowContext(ctx, portableSQL(botGMenuCurrentSelect), rid, bookingID))
 	if cerr != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
 	}
@@ -415,7 +434,7 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if json.Unmarshal([]byte(p.Args), &in) != nil {
 		return "", errors.New("propuesta ilegible")
 	}
-	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()+" FOR UPDATE"), rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
 	}
@@ -432,7 +451,7 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if full != p.Before {
 		return stale(errBotSpecialStale.Error())
 	}
-	cur, cerr := botGMenuScanCurrent(tx.QueryRowContext(ctx, botGMenuCurrentSelect, rid, p.BookingID))
+	cur, cerr := botGMenuScanCurrent(tx.QueryRowContext(ctx, portableSQL(botGMenuCurrentSelect), rid, p.BookingID))
 	if cerr != nil {
 		return "", errors.New("error interno")
 	}
@@ -464,11 +483,12 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	sets := make([]string, len(changes))
 	vals := make([]any, len(changes))
 	for i, c := range changes {
-		sets[i] = "`" + c.Col + "` = ?"
+		sets[i] = sqlFragment("`", `"`) + c.Col + sqlFragment("`", `"`) + " = ?"
 		vals[i] = c.Val
 	}
 	vals = append(vals, rid, p.BookingID)
-	if _, err := tx.ExecContext(ctx, "UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?", vals...); err != nil {
+	// Whitelisted column names quoted per dialect; rebound once.
+	if _, err := tx.ExecContext(ctx, portableSQL("UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?"), vals...); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
 	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, cols...)
@@ -487,7 +507,7 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	oldHist := fmt.Sprintf("%v|%v", oldType, oldServ)
 	newHist := fmt.Sprintf("%v|%v", r.ArrozTypeVal, r.ArrozServVal)
 	if oldHist != newHist {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, 'rice', ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`,
+		if _, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, 'rice', ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, 'rice', ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))`),
 			rid, p.BookingID, row.Date, oldHist, newHist, cur.Name, cur.Phone); err != nil {
 			return "", errors.New("no se pudo registrar el historial; no se aplicó nada")
 		}
@@ -500,7 +520,7 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	notice := fmt.Sprintf("Reserva #%d: %s. No se ha avisado al cliente.", p.BookingID, botGMenuChangeText(p.BookingID, cur, in.MenuDeGrupoID, r))
 	notice += botGMenuPartyText(origParty, in.PartySize)
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "changed_columns": cols, "approval_message_id": msg.MessageID})

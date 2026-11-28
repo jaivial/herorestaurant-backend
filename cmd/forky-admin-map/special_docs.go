@@ -11,7 +11,7 @@ package main
 
 // specialDateFields is the shared field list of the special-date save bodies.
 const specialDateFields = `{date:"YYYY-MM-DD" (obligatorio), is_active:bool, title, description, custom_notice (aviso del paso 2 de la reserva web), ` +
-	`prereserva_enabled:bool, prereserva_starts_on/prereserva_ends_on:"YYYY-MM-DD"|null, max_per_table_enabled:bool, max_per_table:int>=1 (obligatorio si max_per_table_enabled), ` +
+	`prereserva_enabled:bool, whatsapp_only:bool (reservas SOLO por WhatsApp: la web no deja reservar ni prereservar ese día y enseña el WhatsApp del restaurante; manda sobre prereserva_enabled), prereserva_starts_on/prereserva_ends_on:"YYYY-MM-DD"|null, max_per_table_enabled:bool, max_per_table:int>=1 (obligatorio si max_per_table_enabled), ` +
 	`mobility_enabled:bool, allow_customer_modification:bool, ask_adults/ask_high_chairs/ask_baby_strollers:bool, ` +
 	`requires_adelanto:bool, adelanto_payment_methods:["card","bizum","transferencia","efectivo"] o ["stripe"] (stripe va solo), ` +
 	`adelanto_unified:bool, adelanto_unified_amount:€/persona|null (si adelanto_unified=true manda sobre los de menú y sección), ` +
@@ -62,10 +62,20 @@ var specialDescriptionsEs = map[string]string{
 	// Reservas (incluidas las de fecha especial).
 	"POST /bookings":       "Crea una reserva desde el panel (normal o de fecha especial con su bloque special).",
 	"PATCH /bookings/{id}": "Modifica una reserva (solo los campos enviados); special sustituye el bloque de fecha especial y null lo quita.",
+	// booking_confirmation_resend_v1
+	"POST /bookings/{id}/resend-confirmation": "Reenvía al cliente el WhatsApp de confirmación de una reserva al teléfono ACTUAL: resumen y, si es de fecha especial, su QR; si es prereserva de fecha festiva con abonos registrados, regenera y envía también el PDF de comprobante del adelanto. Sin body. La reserva no cambia.",
 }
+
+const comidaCatalogWriteFields = `{nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.`
 
 // bodiesEs: the exact request contract per "METHOD /path" (admin_describe).
 var bodiesEs = map[string]string{
+	"POST /comida/{tipo}":             `Crea un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). ` + comidaCatalogWriteFields + ` Vinos exige tipo, nombre, bodega y precio>0; postres acepta descripcion como nombre.`,
+	"PATCH /comida/{tipo}/{id}":       `Edita un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). ` + comidaCatalogWriteFields,
+	"DELETE /comida/{tipo}/{id}":      `Sin body. Elimina el elemento id solo si pertenece al tipo y restaurante actuales.`,
+	"POST /cafes":                     `Crea un café en la carta especializada de cafés (comida_items.source_type=cafes). ` + comidaCatalogWriteFields,
+	"PATCH /cafes/{id}":               `Edita un café de la carta especializada. ` + comidaCatalogWriteFields,
+	"DELETE /cafes/{id}":              `Sin body. Elimina el café id del restaurante actual.`,
 	"GET /config/special-dates":       `Sin body. query: date=YYYY-MM-DD opcional (sin date = lista de todas las fechas especiales con su id).`,
 	"GET /config/special-dates/stats": `Sin body. query: date=YYYY-MM-DD (obligatorio).`,
 	"POST /config/special-dates":      `REEMPLAZO TOTAL (lo que falte vuelve al valor por defecto y los menús se reescriben): ` + specialDateFields,

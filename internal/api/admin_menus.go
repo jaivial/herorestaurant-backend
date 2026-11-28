@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func (s *Server) handleUpdateDishDia(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +29,10 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 			"success": false,
 			"message": "Unknown restaurant",
 		})
+		return
+	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
 		return
 	}
 
@@ -53,7 +58,11 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		res, err := s.db.ExecContext(r.Context(), "DELETE FROM "+table+" WHERE restaurant_id = ? AND NUM = ?", restaurantID, formID)
+		// table is the fixed "DIA"/"FINDE" literal of the two route wrappers. SOURCE
+		// ANOMALY: neither table exists in the exported/live schema, so these legacy
+		// statements fail on MySQL and PG alike; PG quotes the uppercase identifiers as
+		// written (no substitute table chosen).
+		res, err := s.db.ExecContext(r.Context(), portableSQL("DELETE FROM "+sqlFragment(table, `"`+table+`"`)+sqlFragment(" WHERE restaurant_id = ? AND NUM = ?", ` WHERE restaurant_id = ? AND "NUM" = ?`)), restaurantID, formID)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":  "error",
@@ -104,7 +113,7 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 		selected := formArray(data, "selectedAlergenos")
 		jsonAlergenos, _ := json.Marshal(selected)
 
-		_, err = s.db.ExecContext(r.Context(), "UPDATE "+table+" SET DESCRIPCION = ?, alergenos = ? WHERE restaurant_id = ? AND NUM = ?", texto, string(jsonAlergenos), restaurantID, formID)
+		_, err = s.db.ExecContext(r.Context(), portableSQL("UPDATE "+sqlFragment(table, `"`+table+`"`)+sqlFragment(" SET DESCRIPCION = ?, alergenos = ? WHERE restaurant_id = ? AND NUM = ?", ` SET "DESCRIPCION" = ?, alergenos = ? WHERE restaurant_id = ? AND "NUM" = ?`)), texto, string(jsonAlergenos), restaurantID, formID)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":  "error",
@@ -139,7 +148,7 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 			activeInt = 1
 		}
 
-		_, err = s.db.ExecContext(r.Context(), "UPDATE "+table+" SET active = ? WHERE restaurant_id = ? AND NUM = ?", activeInt, restaurantID, dishID)
+		_, err = s.db.ExecContext(r.Context(), portableSQL("UPDATE "+sqlFragment(table, `"`+table+`"`)+sqlFragment(" SET active = ? WHERE restaurant_id = ? AND NUM = ?", ` SET active = ? WHERE restaurant_id = ? AND "NUM" = ?`)), activeInt, restaurantID, dishID)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":  "error",
@@ -185,7 +194,7 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 
 		jsonAlergenos, _ := json.Marshal(selected)
 
-		res, err := s.db.ExecContext(r.Context(), "INSERT INTO "+table+" (restaurant_id, DESCRIPCION, TIPO, alergenos) VALUES (?, ?, ?, ?)", restaurantID, texto, tipo, string(jsonAlergenos))
+		newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL("INSERT INTO "+sqlFragment(table, `"`+table+`"`)+sqlFragment(" (restaurant_id, DESCRIPCION, TIPO, alergenos) VALUES (?, ?, ?, ?)", ` (restaurant_id, "DESCRIPCION", "TIPO", alergenos) VALUES (?, ?, ?, ?)`)), `"NUM"`, restaurantID, texto, tipo, string(jsonAlergenos))
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":  "error",
@@ -194,7 +203,6 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		newID, _ := res.LastInsertId()
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":  "success",
@@ -256,7 +264,7 @@ func (s *Server) handleToggleDishStatusDia(w http.ResponseWriter, r *http.Reques
 	// The dish id may already be a v2 id (the backoffice works with v2) or a
 	// legacy num that legacy_dish_map knows. Try both, in that order.
 	res, err := s.db.ExecContext(r.Context(),
-		"UPDATE group_menu_section_dishes_v2 SET active = ? WHERE restaurant_id = ? AND id = ?",
+		nativeSQL("UPDATE group_menu_section_dishes_v2 SET active = ? WHERE restaurant_id = ? AND id = ?", `UPDATE group_menu_section_dishes_v2 SET active = $1 WHERE restaurant_id = $2 AND id = $3 AND active IS DISTINCT FROM CAST($1 AS smallint)`),
 		activeInt, restaurantID, int64(dishID))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -268,12 +276,19 @@ func (s *Server) handleToggleDishStatusDia(w http.ResponseWriter, r *http.Reques
 	}
 	affected, _ := res.RowsAffected()
 	if affected <= 0 {
-		res, err = s.db.ExecContext(r.Context(), `
+		res, err = s.db.ExecContext(r.Context(), nativeSQL(`
 			UPDATE group_menu_section_dishes_v2 d
 			   JOIN legacy_dish_map m ON m.v2_dish_id = d.id
 			   SET d.active = ?
 			 WHERE d.restaurant_id = ? AND m.restaurant_id = ?
-			   AND m.legacy_table = 'DIA' AND m.legacy_num = ?`,
+			   AND m.legacy_table = 'DIA' AND m.legacy_num = ?`, `
+			UPDATE group_menu_section_dishes_v2 d
+			   SET active = $1
+			  FROM legacy_dish_map m
+			 WHERE m.v2_dish_id = d.id
+			   AND d.restaurant_id = $2 AND m.restaurant_id = $3
+			   AND m.legacy_table = 'DIA' AND m.legacy_num = $4
+			   AND d.active IS DISTINCT FROM CAST($1 AS smallint)`),
 			activeInt, restaurantID, restaurantID, dishID)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -361,12 +376,19 @@ func (s *Server) handleToggleDishStatusGeneric(w http.ResponseWriter, r *http.Re
 		activeInt = 1
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE group_menu_section_dishes_v2 d
 		   JOIN legacy_dish_map m ON m.v2_dish_id = d.id
 		   SET d.active = ?
 		 WHERE d.restaurant_id = ? AND m.restaurant_id = ?
-		   AND m.legacy_table = ? AND m.legacy_num = ?`,
+		   AND m.legacy_table = ? AND m.legacy_num = ?`, `
+		UPDATE group_menu_section_dishes_v2 d
+		   SET active = $1
+		  FROM legacy_dish_map m
+		 WHERE m.v2_dish_id = d.id
+		   AND d.restaurant_id = $2 AND m.restaurant_id = $3
+		   AND m.legacy_table = $4 AND m.legacy_num = $5
+		   AND d.active IS DISTINCT FROM CAST($1 AS smallint)`),
 		activeInt, restaurantID, restaurantID, table, dishID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -424,8 +446,22 @@ func (s *Server) handleSearchDishesByTable(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":      "success",
+			"success":     true,
+			"message":     "Search completed.",
+			"matchingIds": []int{},
+		})
+		return
+	}
+
 	likeTerm := "%" + searchTerm + "%"
-	rows, err := s.db.QueryContext(r.Context(), "SELECT NUM FROM "+table+" WHERE restaurant_id = ? AND TIPO IN ('ENTRANTE', 'PRINCIPAL', 'ARROZ') AND DESCRIPCION LIKE ?", restaurantID, likeTerm)
+	// SOURCE ANOMALY (DIA/FINDE absent) as above; PG LIKE uses LOWER + C collation (CI/accent gap).
+	if sqlDialect == sqldb.Postgres {
+		likeTerm = strings.ToLower(likeTerm)
+	}
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment("SELECT NUM FROM ", `SELECT "NUM" FROM `)+sqlFragment(table, `"`+table+`"`)+sqlFragment(" WHERE restaurant_id = ? AND TIPO IN ('ENTRANTE', 'PRINCIPAL', 'ARROZ') AND DESCRIPCION LIKE ?", ` WHERE restaurant_id = ? AND "TIPO" IN ('ENTRANTE', 'PRINCIPAL', 'ARROZ') AND LOWER("DESCRIPCION") COLLATE "C" LIKE ?`)), restaurantID, likeTerm)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":      "error",

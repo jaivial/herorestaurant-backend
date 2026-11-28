@@ -64,7 +64,9 @@ type botFloorCandidate struct {
 // floors configured there is nothing valid to assign.
 func (s *Server) botLoadDateFloorsFrom(ctx context.Context, q botRowQuerier, restaurantID int, date string) ([]botFloorCandidate, error) {
 	readRows := func(query string, args ...any) ([]botFloorCandidate, error) {
-		rows, err := q.QueryContext(ctx, query, args...)
+		// q is *sql.DB (propose) or *sql.Tx (execute); callers pass audited
+		// portable literals; no ORDER BY in source: row order engine-arbitrary.
+		rows, err := q.QueryContext(ctx, portableSQL(query), args...)
 		if err != nil {
 			return nil, err
 		}
@@ -103,7 +105,7 @@ func (s *Server) botLoadDateFloorsFrom(ctx context.Context, q botRowQuerier, res
 		}
 		floors = append(merged, scoped...)
 	}
-	rows, err := q.QueryContext(ctx, `SELECT floor_id, is_active FROM restaurant_floor_overrides WHERE restaurant_id = ? AND date = ?`, restaurantID, date)
+	rows, err := q.QueryContext(ctx, portableSQL(`SELECT floor_id, is_active FROM restaurant_floor_overrides WHERE restaurant_id = ? AND date = ?`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +175,7 @@ func (s *Server) botToolFloorPropose(ctx context.Context, rid int, msg botWebhoo
 		return botJSON(map[string]any{"error": rerr.Error()}), nil
 	}
 	var prev sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT preferred_floor_number FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, in.BookingID).Scan(&prev); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT preferred_floor_number FROM bookings WHERE restaurant_id = ? AND id = ?`), rid, in.BookingID).Scan(&prev); err != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
 	}
 	if prev.Valid && prev.Int64 == floor {
@@ -237,7 +239,7 @@ func (s *Server) botFloorExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if json.Unmarshal([]byte(p.Args), &in) != nil {
 		return "", errors.New("propuesta ilegible")
 	}
-	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()+" FOR UPDATE"), rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
 	}
@@ -252,7 +254,7 @@ func (s *Server) botFloorExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 		return stale(errBotSpecialStale.Error())
 	}
 	var prev sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT preferred_floor_number FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, p.BookingID).Scan(&prev); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT preferred_floor_number FROM bookings WHERE restaurant_id = ? AND id = ?`), rid, p.BookingID).Scan(&prev); err != nil {
 		return "", errors.New("error interno")
 	}
 	if botFloorAfterKey(p.BookingID, prev.Valid, prev.Int64, in.Floor) != p.After {
@@ -295,7 +297,7 @@ func (s *Server) botFloorExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, row.Date, in.Floor, nil, row.Party, 1); err != nil {
 		return "", errors.New("no se pudo actualizar la ocupación; no se aplicó nada")
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE bookings SET `preferred_floor_number` = ? WHERE restaurant_id = ? AND id = ?", in.Floor, rid, p.BookingID); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL("UPDATE bookings SET `preferred_floor_number` = ? WHERE restaurant_id = ? AND id = ?", `UPDATE bookings SET "preferred_floor_number" = ? WHERE restaurant_id = ? AND id = ?`), in.Floor, rid, p.BookingID); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
 	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botFloorColumns...)
@@ -304,7 +306,7 @@ func (s *Server) botFloorExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	}
 	notice := fmt.Sprintf("Reserva #%d: salón cambiado a %s (planta %d). No se ha avisado al cliente.", p.BookingID, floorNameForNumber(int(in.Floor)), in.Floor)
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "changed_columns": botFloorColumns, "approval_message_id": msg.MessageID})

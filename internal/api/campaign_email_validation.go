@@ -26,11 +26,13 @@ func (s *Server) handleBOCampaignEmailValidation(w http.ResponseWriter, r *http.
 		return
 	}
 	apply := r.URL.Query().Get("apply") == "1"
-	rows, err := s.db.QueryContext(r.Context(), `
+	// GROUP BY the expression inherits the old-nondeterministic-collation collation: CI/accent folding
+	// picks the group and an arbitrary representative on both (CI/PAD SPACE gap).
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT LOWER(TRIM(contact_email)) e, MAX(id)
 		FROM bookings
 		WHERE restaurant_id = ? AND TRIM(COALESCE(contact_email, '')) <> ''
-		GROUP BY e`, a.ActiveRestaurantID)
+		GROUP BY e`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudieron leer los emails"})
 		return
@@ -48,7 +50,13 @@ func (s *Server) handleBOCampaignEmailValidation(w http.ResponseWriter, r *http.
 	}
 	rows.Close()
 
-	sup, _ := s.loadCampaignSuppressionFilter(r.Context(), a.ActiveRestaurantID)
+	probes := make([]campaignProbe, 0, len(items))
+	for _, it := range items {
+		probes = append(probes, campaignProbe{"email", it.email})
+	}
+	// Report-only classification + suppression inserts (no send): a read
+	// error leaves the filter partial exactly as the source ignored it.
+	sup, _ := s.loadCampaignSuppressionFilterFor(r.Context(), a.ActiveRestaurantID, probes)
 	type verdict struct {
 		it     item
 		ok     bool
@@ -90,7 +98,7 @@ func (s *Server) handleBOCampaignEmailValidation(w http.ResponseWriter, r *http.
 		if len(samples) < 15 {
 			samples = append(samples, v.it.email+" ("+v.reason+")")
 		}
-		if apply && len(v.it.email) <= 190 {
+		if _, fits := campaignSuppressionKey("email", v.it.email); apply && fits {
 			// A suspected typo or a disposable domain is never proven
 			// invalid: it stays blocked as pending verification.
 			source, why := "invalid", "email no valido: "+v.reason
@@ -99,10 +107,16 @@ func (s *Server) handleBOCampaignEmailValidation(w http.ResponseWriter, r *http.
 			} else if v.reason == "dominio desechable" {
 				source, why = "pending_verify", "pendiente de verificar (bloqueado hasta decision): dominio desechable"
 			}
-			if _, err := s.db.ExecContext(r.Context(), `
+			// INSERT IGNORE breadth: only the uq_suppression duplicate (target
+			// <= 190 bytes checked above, short constant reasons, no FK). As in
+			// MySQL a duplicate returns no error and still counts as stored.
+			if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 				INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 				VALUES (?, 'email', ?, NULLIF(?, 0), ?, ?)`,
-				a.ActiveRestaurantID, v.it.email, v.it.booking, why, source); err == nil {
+				`
+				INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+				VALUES (?, 'email', ?, NULLIF(CAST(? AS bigint), 0), ?, ?)
+				ON CONFLICT (restaurant_id, app.norm(channel), app.norm(target)) DO NOTHING`), a.ActiveRestaurantID, v.it.email, v.it.booking, why, source); err == nil {
 				stored++
 			}
 		}

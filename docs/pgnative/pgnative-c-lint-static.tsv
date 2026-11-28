@@ -1,0 +1,1098 @@
+pos	helper	kind	detail
+cmd/backfill-translations/main.go:157:103	nativeSQL	SKIPPED	dynamic
+cmd/backfill-translations/main.go:188:144	nativeSQL	SKIPPED	dynamic
+cmd/backfill-translations/main.go:386:6	literal	SKIPPED	literal piece (lint only)
+cmd/backfill-translations/main.go:404:83	literal	SKIPPED	literal piece (lint only)
+cmd/botstore-migrate/main.go:188:48	selectedSQL	SKIPPED	dynamic
+cmd/cdn-sweep/registry.go:146:5	sqlFragment	SKIPPED	dynamic
+cmd/comida-stock-backfill/main.go:160:59	nativeSQL	SKIPPED	dynamic
+cmd/comida-stock-backfill/main.go:225:75	literal	SKIPPED	literal piece (lint only)
+cmd/comida-stock-backfill/main.go:257:52	nativeSQL	SKIPPED	dynamic
+cmd/group-menu-arroz-cleanup/main.go:406:54	portableSQL	SKIPPED	dynamic
+cmd/migrate-wine-images/main.go:199:66	nativeSQL	SKIPPED	dynamic
+cmd/migrate-wine-images/main.go:202:65	nativeSQL	SKIPPED	dynamic
+cmd/ops-check/main.go:137:675	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:138:765	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:139:1020	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:139:1261	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:139:320	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:139:608	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:139:815	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:139:91	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:163:7	literal	SKIPPED	literal piece (lint only)
+cmd/ops-check/main.go:163:7	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+cmd/ops-check/main.go:193:54	portableSQL	SKIPPED	dynamic
+cmd/pad-gate-check/main.go:95:46	pgOnlySQL	SKIPPED	fragment or DDL/utility (lint only)
+cmd/seed-legal-pages/main.go:93:161	literal	SKIPPED	literal piece (lint only)
+cmd/update-restaurant-info/main.go:103:5	literal	SKIPPED	literal piece (lint only)
+internal/analytics/breakdowns.go:112:50	portableSQL	SKIPPED	dynamic
+internal/analytics/breakdowns.go:238:5	nativeSQL	SKIPPED	dynamic
+internal/analytics/breakdowns.go:297:5	nativeSQL	SKIPPED	dynamic
+internal/analytics/breakdowns.go:346:50	portableSQL	SKIPPED	dynamic
+internal/analytics/service.go:672:5	literal	SKIPPED	literal piece (lint only)
+internal/analytics/service.go:687:121	literal	SKIPPED	literal piece (lint only)
+internal/analytics/service.go:696:5	literal	SKIPPED	literal piece (lint only)
+internal/analytics/service.go:713:5	literal	SKIPPED	literal piece (lint only)
+internal/analytics/service.go:731:5	literal	SKIPPED	literal piece (lint only)
+internal/analytics/service.go:954:5	literal	SKIPPED	literal piece (lint only)
+internal/api/admin_menus.go:112:185	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/admin_menus.go:112:54	portableSQL	SKIPPED	dynamic
+internal/api/admin_menus.go:112:83	sqlFragment	SKIPPED	dynamic
+internal/api/admin_menus.go:147:165	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/admin_menus.go:147:54	portableSQL	SKIPPED	dynamic
+internal/api/admin_menus.go:147:83	sqlFragment	SKIPPED	dynamic
+internal/api/admin_menus.go:193:109	sqlFragment	SKIPPED	dynamic
+internal/api/admin_menus.go:193:206	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/admin_menus.go:193:75	portableSQL	SKIPPED	dynamic
+internal/api/admin_menus.go:450:131	sqlFragment	SKIPPED	dynamic
+internal/api/admin_menus.go:450:256	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/admin_menus.go:450:58	portableSQL	SKIPPED	dynamic
+internal/api/admin_menus.go:450:90	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/admin_menus.go:61:158	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/admin_menus.go:61:57	portableSQL	SKIPPED	dynamic
+internal/api/admin_menus.go:61:91	sqlFragment	SKIPPED	dynamic
+internal/api/admin_vinos.go:153:15	portableSQL	SKIPPED	dynamic
+internal/api/admin_vinos.go:172:59	portableSQL	SKIPPED	dynamic
+internal/api/admin_vinos.go:185:58	portableSQL	SKIPPED	dynamic
+internal/api/admin_vinos.go:276:58	portableSQL	SKIPPED	dynamic
+internal/api/admin_vinos.go:76:15	portableSQL	SKIPPED	dynamic
+internal/api/ai_usage_logging.go:109:47	selectedSQL	SKIPPED	dynamic
+internal/api/assistant_analytics_tools.go:100:75	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_analytics_tools.go:101:48	portableSQL	SKIPPED	dynamic
+internal/api/assistant_analytics_tools.go:123:71	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_analytics_tools.go:50:49	portableSQL	SKIPPED	dynamic
+internal/api/assistant_analytics_tools.go:55:148	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_analytics_tools.go:65:91	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_analytics_tools.go:66:49	portableSQL	SKIPPED	dynamic
+internal/api/assistant_analytics_tools.go:90:98	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:131:46	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:158:65	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:162:48	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:196:44	pgOnlySQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:217:226	sqlFragment	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:217:47	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:253:90	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:256:66	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:259:49	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:260:49	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:334:49	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:364:46	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:405:193	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:405:432	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:405:47	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:419:133	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:419:47	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:446:117	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:455:158	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:462:101	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:468:105	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:476:38	literal	SKIPPED	literal piece (lint only)
+internal/api/assistant_catalog_tools.go:476:38	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:484:134	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:491:48	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:529:111	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:531:162	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:535:48	portableSQL	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:568:65	sqlFragment	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:575:36	sqlFragment	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:592:31	sqlFragment	SKIPPED	dynamic
+internal/api/assistant_catalog_tools.go:600:27	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:602:26	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_catalog_tools.go:98:49	portableSQL	SKIPPED	dynamic
+internal/api/assistant_confirmation.go:112:159	literal	SKIPPED	literal piece (lint only)
+internal/api/assistant_confirmation.go:74:6	literal	SKIPPED	literal piece (lint only)
+internal/api/assistant_memory.go:111:4	literal	SKIPPED	literal piece (lint only)
+internal/api/assistant_memory.go:123:3	literal	SKIPPED	literal piece (lint only)
+internal/api/assistant_memory.go:130:140	literal	SKIPPED	literal piece (lint only)
+internal/api/assistant_tools.go:120:51	portableSQL	SKIPPED	dynamic
+internal/api/assistant_tools.go:164:50	portableSQL	SKIPPED	dynamic
+internal/api/assistant_tools.go:206:50	portableSQL	SKIPPED	dynamic
+internal/api/assistant_tools.go:223:48	portableSQL	SKIPPED	dynamic
+internal/api/assistant_tools.go:248:139	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/assistant_tools.go:265:48	portableSQL	SKIPPED	dynamic
+internal/api/assistant_ws.go:291:109	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_accounting_exports.go:273:50	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_accounting_exports.go:349:3	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_ads.go:714:48	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_ads.go:818:72	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_ads.go:820:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_affluence.go:439:20	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_ai_usage.go:178:58	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_ai_usage.go:179:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_ai_usage.go:290:48	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_ai_usage.go:303:48	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_ai_usage.go:324:47	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_auth.go:217:100	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_auth.go:510:96	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_auth.go:538:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_bookings.go:279:59	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_bookings.go:316:6	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_bookings.go:321:59	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_bookings.go:375:53	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_bookings_search.go:101:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_bookings_search.go:162:65	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_bookings_search.go:56:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_bookings_search.go:95:5	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_branding_logo.go:97:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_campaigns.go:1293:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_campaigns.go:1513:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:1605:74	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_campaigns.go:1613:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:1697:53	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:1701:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:1713:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:1724:36	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_campaigns.go:1738:5	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_campaigns.go:327:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:327:88	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:365:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:365:99	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:752:74	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_campaigns.go:848:79	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:1034:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:1074:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:1090:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:1137:51	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:315:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_comida_categories.go:373:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:544:57	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:544:57	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_comida_categories.go:548:83	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_comida_categories.go:580:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:895:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:925:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_comida_categories.go:944:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_comida_categories.go:992:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_config.go:1038:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:1152:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:1263:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:1357:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:1960:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:1994:7	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:2348:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:2487:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:495:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:513:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:607:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:884:4	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_config.go:884:80	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config.go:885:58	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_config.go:912:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config_ai_image.go:334:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config_ai_image.go:353:119	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config_ai_image.go:359:151	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config_ai_image.go:407:111	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config_bunny.go:165:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_config_minimax.go:268:100	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_dish_same_day_booking.go:111:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_fichaje.go:1910:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus.go:294:54	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus.go:36:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus.go:40:58	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_group_menus_v2.go:1598:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus_v2.go:1707:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus_v2.go:201:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus_v2.go:2164:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus_v2_items.go:369:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus_v2_special_sections.go:207:15	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_group_menus_v2_special_sections.go:733:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_invoices.go:1436:257	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_invoices.go:1486:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_invoices.go:228:59	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:231:59	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:234:58	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:237:85	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:243:47	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_invoices.go:243:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:297:5	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:312:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_invoices.go:353:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_invoices.go:766:5	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:783:72	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:787:72	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_invoices.go:804:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_manual_billing.go:310:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_manual_billing.go:310:86	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_manual_billing.go:330:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_manual_billing.go:330:86	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_manual_billing.go:331:56	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_member_access_flows.go:1036:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:1204:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:1306:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:1839:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:198:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:253:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:584:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_member_access_flows.go:900:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_members.go:369:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_menu_visibility.go:156:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_menu_visibility.go:56:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_menus.go:181:5	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_menus.go:262:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_menus.go:274:54	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_menus.go:301:144	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_menus.go:301:38	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_menus.go:302:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_menus.go:355:157	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_menus.go:355:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_menus.go:355:90	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_menus.go:421:5	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_menus.go:436:6	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_menus.go:62:5	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_middleware.go:138:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_platform.go:294:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_platform.go:519:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_platform.go:581:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_platform.go:685:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos.go:1189:55	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos.go:457:708	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos.go:538:205	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos.go:538:614	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos.go:538:63	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos.go:664:220	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos.go:70:159	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos.go:711:46	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos.go:725:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos.go:725:588	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos.go:853:252	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_admin.go:173:156	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_admin.go:220:212	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_admin.go:234:192	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_admin.go:250:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_admin.go:26:43	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_admin.go:33:435	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_admin.go:33:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:188:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:205:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:205:79	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_cash.go:241:46	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:248:46	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:251:46	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:259:46	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:262:46	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:391:136	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_cash.go:401:133	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_cash.go:421:121	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_cash.go:421:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash.go:488:133	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_cash.go:541:130	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_cash.go:69:90	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_cash_days.go:135:59	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash_days.go:139:59	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash_days.go:146:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash_days.go:211:51	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_cash_days.go:68:39	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_pos_cash_days_reports.go:59:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_catalog.go:143:133	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:277	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:402	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:439	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:554	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_catalog.go:143:724	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:756	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:143:860	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:213:259	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_catalog.go:226:342	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_catalog.go:235:180	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:235:180	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_catalog.go:241:221	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:248:59	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_catalog.go:262:373	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_catalog.go:267:456	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_catalog.go:35:478	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_catalog.go:35:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_catalog.go:35:520	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_checkout.go:233:200	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_checkout.go:258:262	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_checkout.go:322:221	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_checkout.go:65:217	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_checkout.go:774:209	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_customers.go:105:92	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_customers.go:112:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_customers.go:117:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_customers.go:85:217	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_fiscal.go:107:168	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_fiscal.go:112:137	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_fiscal.go:829:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_kitchen.go:245:74	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_kitchen.go:248:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_kitchen.go:339:73	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_kitchen.go:349:62	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_kitchen.go:399:154	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_kitchen.go:445:166	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_kitchen.go:445:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_kitchen.go:544:51	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_modifiers.go:98:103	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_pos_modifiers.go:98:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_operations.go:323:148	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_packs.go:130:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_packs.go:172:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_packs.go:79:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_pin.go:156:142	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_pin.go:171:63	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_rail.go:190:154	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_rail.go:288:359	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_rail.go:398:152	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_rail.go:422:132	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_rail.go:485:148	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_rail.go:695:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_rail.go:819:59	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_pos_rail.go:827:192	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_rail.go:831:182	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_reports.go:268:306	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_stock_realtime.go:148:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_stock_realtime.go:221:7	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_stock_realtime.go:359:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_pos_stock_realtime.go:440:9	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_postres.go:198:54	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_postres.go:225:148	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_postres.go:225:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_postres.go:236:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_preferences.go:158:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_preferences.go:175:113	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_preferences.go:196:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_preferences.go:211:134	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:1123:134	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:1144:118	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:1144:118	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1152:118	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1152:118	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:1163:52	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:1215:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1223:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1232:52	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:1290:157	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1290:157	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:1357:46	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1365:36	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1373:32	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:1385:44	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:2150:44	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2158:44	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2166:38	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2176:75	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:2229:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2245:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2259:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2270:52	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:2350:99	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:2402:74	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2410:71	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2418:59	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2426:56	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2434:53	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2442:50	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2450:50	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2458:50	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2466:50	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2474:38	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2484:75	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:2551:113	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:2677:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2710:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2738:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2761:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2782:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2801:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2819:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2836:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2852:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:2865:52	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:3128:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:3251:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:3655:121	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3656:124	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3657:125	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3662:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:3681:126	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3682:132	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3686:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:3751:51	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3775:51	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3795:51	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3813:51	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3826:49	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:3863:114	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3871:94	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3879:97	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3887:57	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3895:44	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:3905:48	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:3981:44	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:3982:217	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_premium.go:3982:93	sqlFragment	SKIPPED	format fragments
+internal/api/backoffice_premium.go:3982:93	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:3983:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:4008:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:4025:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:856:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:864:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:872:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:880:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:888:49	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_premium.go:905:53	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:913:53	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:921:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:929:38	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_premium.go:938:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_provision.go:28:4	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_provision.go:30:4	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_provision.go:32:4	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_provision.go:34:4	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_provision.go:36:4	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_provision.go:39:50	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_provision.go:56:144	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_rbac.go:233:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_rbac.go:262:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_rbac.go:299:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_rbac.go:334:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_roles.go:550:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_roles.go:902:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_salons.go:489:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_settings.go:128:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_settings.go:229:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_special_dates.go:273:55	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_special_dates.go:275:111	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_special_dates.go:305:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_special_dates.go:768:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_special_dates.go:813:6	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:1126:207	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:1254:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock.go:1260:560	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock.go:1260:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock.go:1338:611	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:1439:206	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:1832:80	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock.go:1835:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock.go:1835:686	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock.go:531:4	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock.go:545:41	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock.go:545:41	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:560:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock.go:579:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock.go:784:313	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:947:297	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock.go:95:161	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_analytics.go:150:301	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_analytics.go:221:217	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_analytics.go:926:141	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_documents.go:170:261	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_documents.go:240:137	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_documents.go:653:211	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_documents.go:698:300	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_import.go:350:151	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_import.go:384:159	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_import.go:390:123	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_margin_scopes.go:202:106	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_margin_targets.go:75:16	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock_permissions.go:107:61	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_permissions.go:19:115	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_recipes.go:526:207	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_recipes.go:548:206	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:129:147	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:206:105	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:308:102	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:314:186	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:323:166	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_stock_suppliers.go:323:166	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:327:139	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:35:94	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_stock_suppliers.go:411:64	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_stock_suppliers.go:413:102	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock_suppliers.go:416:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_stock_suppliers.go:87:137	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_technical_sheet_bulk.go:143:110	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_technical_sheet_components.go:239:15	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_ensure.go:134:4	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_ensure.go:73:4	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_images.go:188:52	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_technical_sheet_link.go:134:5	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:142:65	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:156:5	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:202:4	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:307:56	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:437:81	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:457:3	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:460:58	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheet_link.go:86:100	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_technical_sheets.go:262:15	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheets_ws.go:197:73	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheets_ws.go:205:72	nativeSQL	SKIPPED	dynamic
+internal/api/backoffice_technical_sheets_ws.go:208:50	selectedSQL	SKIPPED	dynamic
+internal/api/backoffice_uazapi_provisioning.go:1022:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_uazapi_provisioning.go:1044:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_uazapi_provisioning.go:664:5	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_uazapi_provisioning.go:689:129	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_uazapi_servers_admin.go:28:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_uazapi_servers_admin.go:416:65	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_uazapi_servers_admin.go:426:122	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_uazapi_servers_admin.go:429:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_uazapi_servers_admin.go:466:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_uazapi_servers_admin.go:487:47	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:104:72	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_vinos.go:109:55	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_vinos.go:295:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:419:61	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:462:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:586:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:597:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:634:54	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos.go:646:75	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_vinos.go:651:56	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_vinos.go:92:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos_cutout.go:110:57	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos_cutout.go:72:58	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos_ws.go:269:50	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos_ws.go:270:39	sqlFragment	SKIPPED	dynamic
+internal/api/backoffice_vinos_ws.go:381:56	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos_ws.go:385:48	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/backoffice_vinos_ws.go:466:45	portableSQL	SKIPPED	dynamic
+internal/api/backoffice_vinos_ws.go:495:43	portableSQL	SKIPPED	dynamic
+internal/api/beverage_options.go:122:5	literal	SKIPPED	literal piece (lint only)
+internal/api/beverage_options.go:143:5	literal	SKIPPED	literal piece (lint only)
+internal/api/beverage_options.go:157:5	literal	SKIPPED	literal piece (lint only)
+internal/api/bo_app_version.go:285:5	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_checkout.go:104:70	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_checkout.go:232:133	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_checkout.go:236:126	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_checkout.go:280:42	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_checkout.go:287:128	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_checkout.go:628:144	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_extras.go:72:5	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_extras.go:86:5	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_notification_settings.go:69:5	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_reminders.go:345:5	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_reminders.go:362:5	literal	SKIPPED	literal piece (lint only)
+internal/api/booking_reminders.go:371:5	literal	SKIPPED	literal piece (lint only)
+internal/api/bookings_admin.go:105:15	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/bookings_admin.go:135:58	portableSQL	SKIPPED	dynamic
+internal/api/cafes_page_seo.go:126:61	sqlFragment	SKIPPED	dynamic
+internal/api/cafes_page_seo.go:136:15	portableSQL	SKIPPED	dynamic
+internal/api/cafes_page_seo.go:136:150	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/cafes_page_seo.go:136:150	literal	SKIPPED	literal piece (lint only)
+internal/api/cafes_page_seo.go:76:47	portableSQL	SKIPPED	dynamic
+internal/api/campaign_auto_retake.go:171:50	portableSQL	SKIPPED	dynamic
+internal/api/campaign_auto_retake.go:173:93	sqlFragment	SKIPPED	dynamic
+internal/api/campaign_auto_retake.go:70:52	portableSQL	SKIPPED	dynamic
+internal/api/campaign_auto_retake.go:74:75	sqlFragment	SKIPPED	dynamic
+internal/api/campaign_bounce_sync.go:297:6	literal	SKIPPED	literal piece (lint only)
+internal/api/campaign_bounce_sync.go:311:5	literal	SKIPPED	literal piece (lint only)
+internal/api/campaign_bounce_sync.go:349:56	literal	SKIPPED	literal piece (lint only)
+internal/api/campaign_email_retry.go:50:57	literal	SKIPPED	literal piece (lint only)
+internal/api/campaign_email_validation.go:116:5	literal	SKIPPED	literal piece (lint only)
+internal/api/campaign_suppression_target.go:125:3	nativeSQL	SKIPPED	dynamic
+internal/api/campaign_suppression_target.go:125:35	literal	SKIPPED	literal piece (lint only)
+internal/api/chatgpt_plugin_tokens.go:122:50	nativeSQL	SKIPPED	dynamic
+internal/api/chatgpt_plugin_tokens.go:152:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:1007:59	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1014:4	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1020:109	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1020:58	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1025:58	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1029:12	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1036:5	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1112:4	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1118:58	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1127:58	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1139:75	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1141:56	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1432:55	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1444:75	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1446:56	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1729:59	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1918:53	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:1959:54	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1981:148	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1981:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:1992:56	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:2083:61	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:2114:56	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:2387:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:2448:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:2488:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:338:6	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:362:6	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:409:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:442:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:704:5	literal	SKIPPED	literal piece (lint only)
+internal/api/comida.go:819:4	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:840:4	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:854:58	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:864:58	portableSQL	SKIPPED	dynamic
+internal/api/comida.go:889:12	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/comida.go:917:5	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/conversation_history.go:148:6	literal	SKIPPED	literal piece (lint only)
+internal/api/conversation_history.go:280:6	literal	SKIPPED	literal piece (lint only)
+internal/api/domain_ownership.go:33:86	literal	SKIPPED	literal piece (lint only)
+internal/api/domain_ownership.go:35:97	literal	SKIPPED	literal piece (lint only)
+internal/api/domain_ownership.go:38:44	selectedSQL	SKIPPED	dynamic
+internal/api/domain_reservation.go:57:5	literal	SKIPPED	literal piece (lint only)
+internal/api/domain_reservation.go:67:3	literal	SKIPPED	literal piece (lint only)
+internal/api/floors_date.go:176:5	literal	SKIPPED	literal piece (lint only)
+internal/api/group_menus.go:147:54	portableSQL	SKIPPED	dynamic
+internal/api/group_menus.go:34:60	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:43:48	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:50:48	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:55:58	portableSQL	SKIPPED	dynamic
+internal/api/group_menus.go:585:46	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:600:55	portableSQL	SKIPPED	dynamic
+internal/api/group_menus.go:690:55	portableSQL	SKIPPED	dynamic
+internal/api/group_menus.go:895:57	portableSQL	SKIPPED	dynamic
+internal/api/group_menus.go:927:25	portableSQL	SKIPPED	dynamic
+internal/api/group_menus.go:929:44	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:930:59	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:931:61	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/group_menus.go:942:75	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/hour_split.go:308:5	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_manager.go:186:5	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_manager.go:393:89	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_manager.go:947:5	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_manager.go:957:5	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_proxy.go:146:124	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_proxy.go:151:134	literal	SKIPPED	literal piece (lint only)
+internal/api/instatic_proxy.go:161:97	literal	SKIPPED	literal piece (lint only)
+internal/api/invoice_numbering.go:235:5	literal	SKIPPED	literal piece (lint only)
+internal/api/invoice_numbering.go:466:5	literal	SKIPPED	literal piece (lint only)
+internal/api/legal_pages.go:197:5	literal	SKIPPED	literal piece (lint only)
+internal/api/legal_pages.go:38:5	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_routes.go:306:121	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_routes.go:308:100	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_store.go:139:5	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_store.go:159:5	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_store.go:229:5	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_store.go:297:5	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_store.go:64:5	literal	SKIPPED	literal piece (lint only)
+internal/api/mcp_oauth_store.go:82:88	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_public_seo.go:29:59	portableSQL	SKIPPED	dynamic
+internal/api/menu_public_seo.go:38:50	portableSQL	SKIPPED	dynamic
+internal/api/menu_public_seo_handlers.go:31:149	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/menu_public_seo_handlers.go:31:149	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_public_seo_handlers.go:31:54	portableSQL	SKIPPED	dynamic
+internal/api/menu_section_dessert_source.go:480:50	portableSQL	SKIPPED	dynamic
+internal/api/menu_visibility_admin.go:195:139	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_visibility_admin.go:206:140	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_visibility_admin.go:225:169	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_visibility_admin.go:37:139	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_visibility_admin.go:46:140	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_visibility_admin.go:60:169	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_visibility_admin.go:97:167	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_weekday_availability.go:120:5	literal	SKIPPED	literal piece (lint only)
+internal/api/menu_weekday_availability.go:244:50	portableSQL	SKIPPED	dynamic
+internal/api/menu_weekday_availability.go:247:49	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/menu_weekday_availability.go:252:48	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/menu_weekday_availability.go:282:59	portableSQL	SKIPPED	dynamic
+internal/api/menu_weekday_availability.go:285:47	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/menu_weekday_availability.go:288:46	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/mobility_config.go:143:5	literal	SKIPPED	literal piece (lint only)
+internal/api/modification_history.go:35:6	nativeSQL	SKIPPED	dynamic
+internal/api/modification_history.go:43:74	pgOnlySQL	SKIPPED	dynamic
+internal/api/modification_history.go:51:4	nativeSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/modification_history.go:53:4	nativeSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/modification_history.go:57:4	nativeSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/modifications_api.go:890:51	portableSQL	SKIPPED	dynamic
+internal/api/modifications_api.go:906:55	portableSQL	SKIPPED	dynamic
+internal/api/occupancy.go:27:6	literal	SKIPPED	literal piece (lint only)
+internal/api/opening_hours.go:105:5	literal	SKIPPED	literal piece (lint only)
+internal/api/pre_shift_reminders.go:53:251	literal	SKIPPED	literal piece (lint only)
+internal/api/public_menus.go:1040:191	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/public_menus.go:1047:66	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:1113:154	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/public_menus.go:1122:63	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:1797:58	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:1898:58	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:1944:58	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:350:15	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:431:26	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/public_menus.go:447:15	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:449:44	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/public_menus.go:449:44	literal	SKIPPED	literal piece (lint only)
+internal/api/public_menus.go:552:50	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:719:50	portableSQL	SKIPPED	dynamic
+internal/api/public_menus.go:771:58	portableSQL	SKIPPED	dynamic
+internal/api/public_unsubscribe.go:174:6	literal	SKIPPED	literal piece (lint only)
+internal/api/public_unsubscribe.go:202:6	literal	SKIPPED	literal piece (lint only)
+internal/api/reservation_day_context.go:344:50	portableSQL	SKIPPED	dynamic
+internal/api/reservation_self_service.go:127:47	sqlFragment	SKIPPED	dynamic
+internal/api/reservation_self_service.go:197:47	portableSQL	SKIPPED	dynamic
+internal/api/reservation_self_service.go:235:47	portableSQL	SKIPPED	dynamic
+internal/api/reservation_self_service.go:600:33	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/reservation_self_service.go:601:36	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/reservation_self_service.go:622:16	portableSQL	SKIPPED	dynamic
+internal/api/reservations_availability.go:304:5	literal	SKIPPED	literal piece (lint only)
+internal/api/reservations_availability.go:559:5	literal	SKIPPED	literal piece (lint only)
+internal/api/reservations_availability.go:593:50	portableSQL	SKIPPED	dynamic
+internal/api/salon_condesa.go:93:5	literal	SKIPPED	literal piece (lint only)
+internal/api/seo_item_routes.go:516:5	sqlFragment	SKIPPED	dynamic
+internal/api/seo_item_routes.go:671:49	portableSQL	SKIPPED	dynamic
+internal/api/seo_item_routes.go:680:5	sqlFragment	SKIPPED	dynamic
+internal/api/seo_item_routes.go:724:42	literal	SKIPPED	literal piece (lint only)
+internal/api/seo_item_routes.go:737:46	literal	SKIPPED	literal piece (lint only)
+internal/api/seo_item_routes.go:946:6	literal	SKIPPED	literal piece (lint only)
+internal/api/seo_item_routes.go:965:57	portableSQL	SKIPPED	dynamic
+internal/api/server.go:1535:3	nativeSQL	SKIPPED	dynamic
+internal/api/server.go:1536:58	selectedSQL	SKIPPED	dynamic
+internal/api/server.go:1575:3	nativeSQL	SKIPPED	dynamic
+internal/api/server.go:1577:58	selectedSQL	SKIPPED	dynamic
+internal/api/server.go:1680:37	nativeSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/server.go:1682:4	nativeSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/server.go:1702:58	portableSQL	SKIPPED	dynamic
+internal/api/site_builder.go:1014:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1067:132	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1075:113	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1151:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1196:6	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:1210:49	portableSQL	SKIPPED	dynamic
+internal/api/site_builder.go:1249:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1389:102	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1419:62	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:1438:44	portableSQL	SKIPPED	dynamic
+internal/api/site_builder.go:1456:102	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1471:92	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1499:132	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1507:113	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1562:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1715:108	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1776:109	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1791:99	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1813:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1844:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1873:5	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:1899:104	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:427:62	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:431:58	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:445:44	portableSQL	SKIPPED	dynamic
+internal/api/site_builder.go:481:89	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:622:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:658:99	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:704:54	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:708:60	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:712:68	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:716:57	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:730:44	portableSQL	SKIPPED	dynamic
+internal/api/site_builder.go:753:108	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:773:89	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:806:6	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:818:42	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/site_builder.go:818:42	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:824:49	portableSQL	SKIPPED	dynamic
+internal/api/site_builder.go:928:6	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:966:100	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder.go:981:90	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:135:216	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:237:195	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:246:248	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:380:3	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:411:299	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:472:269	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_billing.go:73:310	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:140:211	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:154:204	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:171:194	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:235:142	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:253:120	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:302:5	literal	SKIPPED	literal piece (lint only)
+internal/api/site_builder_registrar.go:310:117	literal	SKIPPED	literal piece (lint only)
+internal/api/special_booking_snapshot.go:709:148	sqlFragment	SKIPPED	dynamic
+internal/api/special_booking_snapshot.go:709:16	portableSQL	SKIPPED	dynamic
+internal/api/special_booking_snapshot.go:709:43	sqlFragment	SKIPPED	dynamic
+internal/api/special_booking_snapshot.go:709:84	sqlFragment	SKIPPED	dynamic
+internal/api/special_booking_snapshot.go:771:50	portableSQL	SKIPPED	dynamic
+internal/api/special_menu_principales.go:199:5	literal	SKIPPED	literal piece (lint only)
+internal/api/sql_native.go:125:75	nativeSQL	SKIPPED	dynamic
+internal/api/sql_native.go:127:59	pgOnlySQL	SKIPPED	dynamic
+internal/api/stripe_connect.go:128:692	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_connect.go:143:126	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_connect_fees.go:198:194	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_connect_fees.go:231:115	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_connect_fees.go:62:139	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_event_claim.go:65:3	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_event_claim.go:71:109	literal	SKIPPED	literal piece (lint only)
+internal/api/stripe_event_claim.go:87:3	literal	SKIPPED	literal piece (lint only)
+internal/api/tenant.go:128:118	literal	SKIPPED	literal piece (lint only)
+internal/api/translations.go:225:26	literal	SKIPPED	literal piece (lint only)
+internal/api/translations.go:225:26	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/translations.go:231:50	portableSQL	SKIPPED	dynamic
+internal/api/translations.go:274:5	literal	SKIPPED	literal piece (lint only)
+internal/api/translations.go:538:5	literal	SKIPPED	literal piece (lint only)
+internal/api/translations.go:562:5	literal	SKIPPED	literal piece (lint only)
+internal/api/website_builder_handlers.go:1069:57	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/website_builder_handlers.go:1077:63	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/website_builder_handlers.go:1086:50	portableSQL	SKIPPED	dynamic
+internal/api/website_builder_handlers.go:1724:50	selectedSQL	SKIPPED	dynamic
+internal/api/website_builder_handlers.go:531:50	portableSQL	SKIPPED	dynamic
+internal/api/website_builder_handlers.go:746:57	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/website_builder_handlers.go:759:50	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_admin.go:165:5	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_admin.go:328:5	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_admin_reads.go:546:29	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_admin_reads.go:558:50	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_admin_reads.go:737:6	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_ai_config.go:220:76	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_ai_config.go:230:149	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_ai_config.go:98:147	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_catalog_extras.go:109:182	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_catalog_extras.go:191:191	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_catalog_extras.go:203:212	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_catalog_extras.go:206:182	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_chat_images.go:109:49	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_chat_images.go:155:12	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_config_admin.go:148:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:172:165	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_config_admin.go:172:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:196:140	sqlFragment	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:196:44	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:214:44	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:326:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:327:102	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_config_admin.go:327:102	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_config_admin.go:584:202	sqlFragment	SKIPPED	dynamic
+internal/api/whatsapp_bot_config_admin.go:584:223	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_config_admin.go:697:166	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_context_sqlite.go:288:45	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_context_sqlite.go:351:46	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_context_sqlite.go:472:50	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_executor.go:1153:53	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_executor.go:1157:56	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_executor.go:1276:48	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_extras_admin.go:275:74	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_extras_admin.go:313:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_extras_admin.go:330:72	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_extras_admin.go:359:30	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_extras_admin.go:359:62	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_extras_admin.go:364:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_flags.go:135:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_floor.go:242:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_floor.go:69:48	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_admin.go:386:73	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_admin.go:437:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_admin.go:454:71	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_admin.go:486:30	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_groupmenu_admin.go:486:62	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_groupmenu_admin.go:491:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_remove.go:113:79	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_remove.go:151:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_groupmenu_remove.go:168:77	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_history.go:53:7	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_history.go:57:44	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_human_takeover.go:107:13	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_human_takeover.go:109:45	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_human_takeover.go:90:7	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_human_takeover.go:94:47	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_inbound_queue.go:108:47	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_inbound_queue.go:201:49	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_inbound_queue.go:209:48	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_inbound_queue.go:60:7	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_inbound_queue.go:62:47	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_inbound_queue.go:85:47	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_media_ops.go:200:15	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_media_ops.go:210:15	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_media_ops.go:369:136	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_media_ops.go:369:15	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_mobility_admin.go:128:76	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_mobility_admin.go:162:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_mobility_admin.go:176:74	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_mobility_admin.go:208:30	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_mobility_admin.go:208:62	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_mobility_admin.go:213:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_notif_settings.go:138:380	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_privileged_contacts.go:116:5	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_privileged_control_tools.go:351:5	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_privileged_control_tools.go:505:5	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_rag.go:149:35	selectedSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_rag.go:179:47	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_rag.go:185:45	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_rice_admin.go:227:72	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_rice_admin.go:269:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_rice_admin.go:286:70	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1094:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1215:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1649:46	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1665:46	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1768:31	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:1768:59	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:1777:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1793:48	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:1793:72	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:1795:48	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:1959:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:2427:72	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:2473:68	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:2487:70	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:2515:30	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:2515:62	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:2520:47	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:2580:171	sqlFragment	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:2586:121	sqlFragment	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:369:65	selectedSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:853:48	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:866:49	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:971:131	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_admin_tools.go:973:43	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_admin_tools.go:976:43	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_date_adelanto.go:64:50	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_date_adelanto.go:87:174	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_date_adelanto.go:87:45	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_date_adelanto.go:91:45	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_special_date_adelanto.go:93:66	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_date_adelanto.go:98:88	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_bot_special_date_adelanto.go:98:88	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_tools.go:113:90	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_tools.go:122:143	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_special_tools.go:126:50	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_staff_bookings.go:144:45	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_staff_bookings.go:149:75	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/whatsapp_bot_staff_bookings.go:156:50	portableSQL	SKIPPED	dynamic
+internal/api/whatsapp_bot_unsubscribe.go:116:6	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_outbox.go:96:5	literal	SKIPPED	literal piece (lint only)
+internal/api/whatsapp_unreachable.go:75:5	literal	SKIPPED	literal piece (lint only)
+internal/api/widget_routes.go:256:61	nativeSQL	SKIPPED	dynamic
+internal/api/widget_routes.go:262:51	literal	SKIPPED	literal piece (lint only)
+internal/api/widget_routes.go:262:51	nativeSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/api/widget_routes.go:265:53	portableSQL	SKIPPED	dynamic
+internal/api/wines_v2.go:138:15	portableSQL	SKIPPED	dynamic
+internal/api/wines_v2.go:57:36	sqlFragment	SKIPPED	fragment or DDL/utility (lint only)
+internal/botstore/botstore.go:100:43	selectedSQL	SKIPPED	dynamic
+internal/botstore/botstore.go:104:44	selectedSQL	SKIPPED	dynamic
+internal/botstore/botstore.go:108:47	selectedSQL	SKIPPED	dynamic
+internal/botstore/botstore.go:112:57	selectedSQL	SKIPPED	dynamic
+internal/botstore/botstore.go:119:43	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/botstore.go:122:45	selectedSQL	SKIPPED	dynamic
+internal/botstore/botstore.go:141:38	selectedSQL	SKIPPED	dynamic
+internal/botstore/botstore.go:147:38	selectedSQL	SKIPPED	fragment or DDL/utility (lint only)
+internal/botstore/botstore.go:79:35	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/migrate.go:216:49	selectedSQL	SKIPPED	dynamic
+internal/botstore/migrate.go:245:49	selectedSQL	SKIPPED	dynamic
+internal/botstore/migrate.go:271:46	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/migrate.go:271:57	literal	SKIPPED	literal piece (lint only)
+internal/botstore/migrate.go:351:46	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/migrate.go:361:45	selectedSQL	SKIPPED	dynamic
+internal/botstore/migrate.go:366:47	selectedSQL	SKIPPED	dynamic
+internal/botstore/migrate.go:418:44	selectedSQL	SKIPPED	dynamic
+internal/botstore/migrate.go:74:47	selectedSQL	SKIPPED	dynamic
+internal/botstore/mysql.go:140:45	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/mysql.go:208:45	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/mysql.go:258:47	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/mysql.go:288:47	pgOnlySQL	SKIPPED	dynamic
+internal/botstore/mysql.go:430:46	pgOnlySQL	SKIPPED	dynamic
+internal/db/nativekeys.go:100:99	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:101:83	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:102:79	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:103:92	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:104:79	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:105:99	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:106:72	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:107:89	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:108:91	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:109:101	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:110:60	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:111:66	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:112:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:113:77	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:114:83	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:115:82	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:116:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:117:69	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:118:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:119:74	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:120:71	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:121:79	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:122:72	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:123:56	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:124:76	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:125:76	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:126:94	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:127:95	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:128:84	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:129:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:130:64	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:131:72	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:132:70	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:133:73	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:134:76	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:135:61	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:136:70	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:137:58	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:138:55	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:195:21	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:22:60	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:23:78	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:24:75	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:25:81	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:26:81	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:27:97	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:28:86	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:29:89	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:30:60	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:31:68	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:32:82	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:33:80	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:34:101	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:35:101	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:36:98	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:37:61	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:38:52	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:39:55	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:40:78	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:41:94	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:42:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:43:76	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:44:73	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:45:73	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:46:52	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:47:88	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:48:98	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:49:89	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:50:91	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:51:75	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:52:97	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:53:56	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:54:72	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:55:91	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:56:102	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:57:72	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:58:71	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:59:81	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:60:70	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:61:73	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:62:97	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:63:82	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:64:95	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:65:56	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:66:89	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:67:52	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:68:63	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:69:82	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:70:85	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:71:94	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:72:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:73:65	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:74:82	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:75:85	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:76:77	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:77:92	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:78:84	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:79:81	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:80:84	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:81:51	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:82:67	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:83:68	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:84:89	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:85:59	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:86:64	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:87:81	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:88:63	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:89:86	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:90:48	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:91:96	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:92:79	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:93:61	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:94:61	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:95:59	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:96:83	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:97:66	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:98:86	literal	SKIPPED	literal piece (lint only)
+internal/db/nativekeys.go:99:101	literal	SKIPPED	literal piece (lint only)
+internal/api/backoffice_premium.go:3982:93	lint	a_norm_in_raw	app.norm_ascii(...) IN (... %s ...)
+internal/api/whatsapp_bot_context_sqlite.go:351:46	lint	b_on_conflict	handoff_state (restaurant_id,user_phone)
+internal/botstore/migrate.go:271:57	lint	b_on_conflict	bot_store_meta (key)

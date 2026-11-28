@@ -661,6 +661,7 @@ const assistantOutputContract = "\n\nFORMATO DE RESPUESTA (obligatorio):\n" +
 	"3. VISUALIZACIONES INTERACTIVAS (calculadoras, comparadores, diagramas, simulaciones, widgets a medida): cuando una respuesta se entienda mejor como una pieza interactiva que como texto o gráfico fijo, emite un bloque delimitado con tiques invertidos y lenguaje `forky-widget` con HTML EN BRUTO (sin JSON, sin escapar comillas): la primera línea puede llevar `title: ...` y `height: ...` (alto en px), seguidas de una línea con solo `---`, y después el HTML completo. El cliente lo renderiza en un iframe aislado (scripts permitidos, sin acceso al origen):\n" +
 	"```forky-widget\ntitle: Calculadora de propinas\nheight: 320\n---\n<div style=\"...\">...</div>\n<script>...</script>\n```\n" +
 	"El HTML puede cargar librerías CDN (Chart.js, D3, etc.) con etiquetas <script src>. NUNCA incluyas tiques invertidos triples dentro del HTML. Úsalo con moderación: solo cuando aporte de verdad sobre una tabla o un gráfico `forky-chart`. MANTÉN el HTML COMPACTO (pocas líneas, estilos breves): los widgets largos se cortan y no se renderizan.\n" +
+	"3b. DOCUMENTOS GENERADOS: para crear un PDF o una imagen 4:3 (carta, menú, cartel, informe) escribe HTML completo con CSS en <style> (sin JavaScript) con datos reales de las herramientas y llama a render_document; luego muestra pdf_url / image_url con un bloque forky-doc.\n" +
 	"4. DOCUMENTOS (facturas, informes, PDFs u otros archivos con URL): emite un bloque JSON con lenguaje `forky-doc` para que el cliente muestre una tarjeta con vista previa. Las herramientas de facturas devuelven pdf_url con la ruta real del PDF: úsala tal cual en url. NUNCA inventes URLs; si no hay pdf_url, di que el documento no está disponible:\n" +
 	"```forky-doc\n{\"title\": \"Factura F-2026-041\", \"url\": \"https://...\", \"kind\": \"pdf\" | \"invoice\" | \"report\" | \"sheet\" | \"image\"}\n```\n" +
 	"5. IMÁGENES con URL: insértalas como Markdown normal (`![descripción](https://...)`); el cliente las muestra con vista previa ampliable.\n" +
@@ -684,6 +685,10 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"Para cambiar una fecha especial (título, activa, pre-reserva, adelanto, métodos de pago, menús…) usa admin_patch_config_special_dates con date y SOLO lo que cambia (nunca el POST, que la reemplaza entera). " +
 		"El adelanto por persona es de la FECHA (menus[].adelanto_amount, o menus[].sections[].adelanto_amount en menús especiales por secciones, o adelanto_unified_amount), nunca de la sección del menú. " +
 		"Las imágenes adjuntas de un menú especial, de sus secciones o de un menú personalizado de una fecha se suben con special_media_upload. " +
+		// special_date_whatsapp_only_v1: the WhatsApp-only switch has its own tools.
+		"Para que una fecha especial se reserve SOLO POR WHATSAPP (la web no deja reservar ni prereservar y enseña el WhatsApp del restaurante) usa special_date_whatsapp_only_get y special_date_whatsapp_only_set. " +
+		// booking_confirmation_resend_v1: the confirmation re-send has its own tool.
+		"Para reenviar al cliente el WhatsApp de confirmación de una reserva (no le llegó, se cambió el teléfono después o falló el envío; con su QR si es de fecha especial y el comprobante del adelanto regenerado si es prereserva) usa booking_confirmation_resend: primero confirmed=false para la vista previa y, cuando el usuario confirme, confirmed=true con el confirmation_token. " +
 		// ads_html_editor_v1: the web ads have their own tools too.
 		"Para los anuncios de la web (avisos emergentes de /app/anuncios: crear, ajustar fechas o tipo, diseñar, poner imágenes, publicar o borrar) usa SIEMPRE ad_get, ad_save, ad_design, ad_image y ad_delete, nunca admin_call: solo ellas compilan el diseño que ve la web. Publicar (ad_save action=publish) y borrar necesitan que el usuario diga que sí en su siguiente mensaje." +
 		assistantOutputContract
@@ -691,7 +696,9 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		return base
 	}
 	var name, phone string
-	if err := s.db.QueryRowContext(ctx, `SELECT name, phone FROM restaurants WHERE id = ?`, restaurantID).Scan(&name, &phone); err != nil {
+	// SOURCE ANOMALY (restored dump only, not production-validated):
+	// restaurants has no "phone" column; both dialects fail -> base prompt.
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT name, phone FROM restaurants WHERE id = ?`), restaurantID).Scan(&name, &phone); err != nil {
 		return base
 	}
 	var sb strings.Builder

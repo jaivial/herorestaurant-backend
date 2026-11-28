@@ -63,13 +63,19 @@ func (s *Server) suppressMarketingContact(ctx context.Context, restaurantID int,
 	national, digits := botPhoneVariants(msg.Sender)
 	var bookingID int64
 	emails := []string{}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, LOWER(TRIM(COALESCE(contact_email, '')))
 		FROM bookings
 		WHERE restaurant_id = ?
 			AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 		ORDER BY id DESC LIMIT 20
-	`, restaurantID, national, digits, digits)
+	`, `
+		SELECT id, LOWER(TRIM(COALESCE(contact_email, '')))
+		FROM bookings
+		WHERE restaurant_id = ?
+			AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+		ORDER BY id DESC LIMIT 20
+	`), restaurantID, national, digits, digits)
 	if err == nil {
 		seen := map[string]bool{}
 		for rows.Next() {
@@ -101,10 +107,17 @@ func (s *Server) suppressMarketingContact(ctx context.Context, restaurantID int,
 	}
 	stored := 0
 	for _, p := range pairs {
-		if _, err := s.db.ExecContext(ctx, `
+		if _, fits := campaignSuppressionKey(p.channel, p.target); !fits {
+			continue // never truncated into another recipient; filter blocks it
+		}
+		if _, err := s.db.ExecContext(ctx, nativeSQL(`
 			INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 			VALUES (?, ?, ?, NULLIF(?, 0), ?, 'unsubscribe')
-		`, restaurantID, p.channel, p.target, bookingID, reason); err != nil {
+		`, `
+			INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+			VALUES (?, ?, ?, NULLIF(CAST(? AS bigint), 0), ?, 'unsubscribe')
+			ON CONFLICT (restaurant_id, app.norm(channel), app.norm(target)) DO NOTHING
+		`), restaurantID, p.channel, p.target, bookingID, campaignSuppressionReason(reason)); err != nil {
 			slog.Default().Warn("wa_bot.unsubscribe.insert_failed", "coord_id", "wa_bot_unsubscribe_v1",
 				"restaurant_id", restaurantID, "channel", p.channel, "err", err.Error())
 			continue

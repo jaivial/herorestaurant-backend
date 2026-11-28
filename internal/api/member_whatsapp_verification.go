@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 	"time"
 
@@ -41,7 +42,7 @@ func (s *Server) memberWhatsAppEnabled(ctx context.Context, restaurantID int, ph
 		return false
 	}
 	var verified bool
-	err = s.db.QueryRowContext(ctx, `SELECT whatsapp_verified_at IS NOT NULL FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND (whatsapp_number=? OR phone=?) LIMIT 1`, restaurantID, "+"+number, "+"+number).Scan(&verified)
+	err = s.db.QueryRowContext(ctx, portableSQL(`SELECT whatsapp_verified_at IS NOT NULL FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND (whatsapp_number=? OR phone=?) LIMIT 1`), restaurantID, "+"+number, "+"+number).Scan(&verified)
 	return err == nil && verified
 }
 
@@ -76,7 +77,7 @@ func (s *Server) handleBOMemberWhatsAppVerificationSend(w http.ResponseWriter, r
 		return
 	}
 	var phone sql.NullString
-	if err = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(NULLIF(whatsapp_number,''), phone) FROM restaurant_members WHERE id=? AND restaurant_id=? AND is_active=1`, id, a.ActiveRestaurantID).Scan(&phone); err != nil {
+	if err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COALESCE(NULLIF(whatsapp_number,''), phone) FROM restaurant_members WHERE id=? AND restaurant_id=? AND is_active=1`, `SELECT COALESCE(CASE WHEN rtrim(whatsapp_number, ' ') COLLATE "C" = '' THEN NULL ELSE whatsapp_number END, phone) FROM restaurant_members WHERE id=? AND restaurant_id=? AND is_active=1`), id, a.ActiveRestaurantID).Scan(&phone); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "Miembro no encontrado")
 		} else {
@@ -96,7 +97,7 @@ func (s *Server) handleBOMemberWhatsAppVerificationSend(w http.ResponseWriter, r
 	}
 	expires := time.Now().Add(10 * time.Minute)
 	digest := verificationDigest(id, number, code)
-	_, err = s.db.ExecContext(r.Context(), `UPDATE restaurant_members SET whatsapp_verification_digest=?, whatsapp_verification_expires_at=?, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=? AND is_active=1`, digest, expires, id, a.ActiveRestaurantID)
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`UPDATE restaurant_members SET whatsapp_verification_digest=?, whatsapp_verification_expires_at=?, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=? AND is_active=1`), digest, sqldb.NaiveUTCArg(sqlDialect, expires), id, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar codigo")
 		return
@@ -133,7 +134,7 @@ func (s *Server) handleBOMemberWhatsAppVerificationConfirm(w http.ResponseWriter
 	var digest sql.NullString
 	var expires sql.NullTime
 	var attempts int
-	err = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(NULLIF(whatsapp_number,''), phone), whatsapp_verification_digest, whatsapp_verification_expires_at, whatsapp_verification_attempts FROM restaurant_members WHERE id=? AND restaurant_id=? AND is_active=1`, id, a.ActiveRestaurantID).Scan(&phone, &digest, &expires, &attempts)
+	err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COALESCE(NULLIF(whatsapp_number,''), phone), whatsapp_verification_digest, whatsapp_verification_expires_at, whatsapp_verification_attempts FROM restaurant_members WHERE id=? AND restaurant_id=? AND is_active=1`, `SELECT COALESCE(CASE WHEN rtrim(whatsapp_number, ' ') COLLATE "C" = '' THEN NULL ELSE whatsapp_number END, phone), whatsapp_verification_digest, whatsapp_verification_expires_at, whatsapp_verification_attempts FROM restaurant_members WHERE id=? AND restaurant_id=? AND is_active=1`), id, a.ActiveRestaurantID).Scan(&phone, &digest, &expires, &attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusNotFound, "Miembro no encontrado")
 		return
@@ -143,11 +144,11 @@ func (s *Server) handleBOMemberWhatsAppVerificationConfirm(w http.ResponseWriter
 		return
 	}
 	if attempts >= 5 || !expires.Valid || time.Now().After(expires.Time) || digest.String != verificationDigest(id, phone.String, code) {
-		_, _ = s.db.ExecContext(r.Context(), `UPDATE restaurant_members SET whatsapp_verification_attempts=whatsapp_verification_attempts+1 WHERE id=? AND restaurant_id=?`, id, a.ActiveRestaurantID)
+		_, _ = s.db.ExecContext(r.Context(), portableSQL(`UPDATE restaurant_members SET whatsapp_verification_attempts=whatsapp_verification_attempts+1 WHERE id=? AND restaurant_id=?`), id, a.ActiveRestaurantID)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "code": "INVALID_CODE", "message": "Codigo invalido o caducado"})
 		return
 	}
-	_, err = s.db.ExecContext(r.Context(), `UPDATE restaurant_members SET whatsapp_verified_at=NOW(), whatsapp_verification_digest=NULL, whatsapp_verification_expires_at=NULL, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=?`, id, a.ActiveRestaurantID)
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE restaurant_members SET whatsapp_verified_at=NOW(), whatsapp_verification_digest=NULL, whatsapp_verification_expires_at=NULL, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=?`, `UPDATE restaurant_members SET whatsapp_verified_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), whatsapp_verification_digest=NULL, whatsapp_verification_expires_at=NULL, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=?`), id, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo verificar telefono")
 		return

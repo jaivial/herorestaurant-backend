@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boMemberCreateResult struct {
@@ -178,24 +179,28 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.ExecContext(ctx, `
+	memberID64, err := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`
 		INSERT INTO restaurant_members
 			(restaurant_id, first_name, last_name, email, dni, bank_account, phone, whatsapp_number, photo_url, is_active)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-	`, a.ActiveRestaurantID, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo))
+	`), "id", a.ActiveRestaurantID, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo))
 	if err != nil {
 		return boMemberCreateResult{Success: false, Message: "No se pudo crear el miembro (email/usuario duplicado)"}, nil
 	}
 
-	memberID64, _ := res.LastInsertId()
 	memberID := int(memberID64)
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO member_contracts (restaurant_member_id, restaurant_id, weekly_hours)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			weekly_hours = VALUES(weekly_hours)
-	`, memberID, a.ActiveRestaurantID, weeklyHours); err != nil {
+	`, `
+		INSERT INTO member_contracts (restaurant_member_id, restaurant_id, weekly_hours)
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_member_id) DO UPDATE SET
+			weekly_hours = EXCLUDED.weekly_hours
+	`), memberID, a.ActiveRestaurantID, weeklyHours); err != nil {
 		return boMemberCreateResult{}, err
 	}
 
@@ -223,29 +228,33 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 	// with a duplicate-key error that was previously swallowed as a generic
 	// message. Detect it early and return an actionable error instead.
 	var linkedToOther int
-	if err := tx.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*) FROM restaurant_members
 		WHERE restaurant_id = ? AND bo_user_id = ? AND id != ?
-	`, a.ActiveRestaurantID, user.UserID, memberID).Scan(&linkedToOther); err != nil {
+	`), a.ActiveRestaurantID, user.UserID, memberID).Scan(&linkedToOther); err != nil {
 		return boMemberCreateResult{}, err
 	}
 	if linkedToOther > 0 {
 		return boMemberCreateResult{Success: false, Message: "El email ya esta vinculado a otro miembro de este restaurante"}, nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, portableSQL(`
 		UPDATE restaurant_members
 		SET bo_user_id = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, user.UserID, memberID, a.ActiveRestaurantID); err != nil {
+	`), user.UserID, memberID, a.ActiveRestaurantID); err != nil {
 		return boMemberCreateResult{Success: false, Message: "No se pudo vincular usuario de backoffice"}, nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE role = VALUES(role)
-	`, user.UserID, a.ActiveRestaurantID, roleSlug); err != nil {
+	`, `
+		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
+		VALUES (?, ?, ?)
+		ON CONFLICT (user_id, restaurant_id) DO UPDATE SET role = EXCLUDED.role
+	`), user.UserID, a.ActiveRestaurantID, roleSlug); err != nil {
 		return boMemberCreateResult{}, err
 	}
 
@@ -344,12 +353,12 @@ func (s *Server) ensureBOUserForMemberTx(ctx context.Context, tx *sql.Tx, in boE
 	if normalizedEmail != "" {
 		var existing boEnsuredUser
 		var usernameRaw sql.NullString
-		err := tx.QueryRowContext(ctx, `
+		err := tx.QueryRowContext(ctx, portableSQL(`
 			SELECT id, email, username, must_change_password
 			FROM bo_users
 			WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
 			LIMIT 1
-		`, normalizedEmail).Scan(&existing.UserID, &existing.Email, &usernameRaw, &existing.MustChangePass)
+		`), normalizedEmail).Scan(&existing.UserID, &existing.Email, &usernameRaw, &existing.MustChangePass)
 		if err == nil {
 			existing.Username = strings.TrimSpace(usernameRaw.String)
 			if existing.Username == "" {
@@ -358,9 +367,19 @@ func (s *Server) ensureBOUserForMemberTx(ctx context.Context, tx *sql.Tx, in boE
 					cand = usernameBaseFromIdentity(displayName, normalizedEmail)
 				}
 				if cand != "" {
-					resolved, rerr := ensureUniqueUsernameTx(ctx, tx, cand)
+					// A failed lookup is ignored and the transaction continues
+					// (caller links the member next): scoped so PG keeps the tx.
+					var resolved string
+					rerr := sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+						var e error
+						resolved, e = ensureUniqueUsernameTx(ctx, tx, cand)
+						return e
+					})
 					if rerr == nil {
-						_, _ = tx.ExecContext(ctx, `UPDATE bo_users SET username = ? WHERE id = ?`, resolved, existing.UserID)
+						_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+							_, e := tx.ExecContext(ctx, portableSQL(`UPDATE bo_users SET username = ? WHERE id = ?`), []any{resolved, existing.UserID}...)
+							return e
+						})
 						existing.Username = resolved
 					}
 				}
@@ -406,33 +425,44 @@ func (s *Server) ensureBOUserForMemberTx(ctx context.Context, tx *sql.Tx, in boE
 		return boEnsuredUser{}, err
 	}
 
-	res, err := tx.ExecContext(ctx, `
+	// MySQL keeps the transaction usable after the duplicate-key error so the
+	// retry SELECT below runs; on PG a SAVEPOINT gives the same (isolation
+	// note: PG READ COMMITTED can see a concurrently committed row that a
+	// MySQL REPEATABLE READ snapshot would not).
+	var lastID int64
+	err = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+		var ierr error
+		lastID, ierr = sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`
 		INSERT INTO bo_users (email, username, name, password_hash, is_superadmin, must_change_password)
 		VALUES (?, ?, ?, ?, 0, ?)
-	`, finalEmail, resolvedUsername, displayName, string(hash), boolToIntFlag(mustChange))
+	`), "id", finalEmail, resolvedUsername, displayName, string(hash), boolToIntFlag(mustChange))
+		return ierr
+	})
 	if err != nil {
 		// Retry by resolving an already-created user (race on email).
 		var existing boEnsuredUser
 		var usernameRaw sql.NullString
-		err2 := tx.QueryRowContext(ctx, `
+		err2 := tx.QueryRowContext(ctx, portableSQL(`
 			SELECT id, email, username, must_change_password
 			FROM bo_users
 			WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
 			LIMIT 1
-		`, finalEmail).Scan(&existing.UserID, &existing.Email, &usernameRaw, &existing.MustChangePass)
+		`), finalEmail).Scan(&existing.UserID, &existing.Email, &usernameRaw, &existing.MustChangePass)
 		if err2 != nil {
 			return boEnsuredUser{}, err
 		}
 		existing.Username = strings.TrimSpace(usernameRaw.String)
 		if existing.Username == "" {
-			_, _ = tx.ExecContext(ctx, `UPDATE bo_users SET username = ? WHERE id = ?`, resolvedUsername, existing.UserID)
+			_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+				_, e := tx.ExecContext(ctx, portableSQL(`UPDATE bo_users SET username = ? WHERE id = ?`), []any{resolvedUsername, existing.UserID}...)
+				return e
+			})
 			existing.Username = resolvedUsername
 		}
 		existing.Created = false
 		return existing, nil
 	}
 
-	lastID, _ := res.LastInsertId()
 	return boEnsuredUser{
 		UserID:         int(lastID),
 		Email:          finalEmail,
@@ -509,12 +539,12 @@ func ensureUniqueUsernameTx(ctx context.Context, tx *sql.Tx, base string) (strin
 			}
 		}
 		var userID int
-		err := tx.QueryRowContext(ctx, `
+		err := tx.QueryRowContext(ctx, portableSQL(`
 			SELECT id
 			FROM bo_users
 			WHERE LOWER(TRIM(COALESCE(username, ''))) = LOWER(TRIM(?))
 			LIMIT 1
-		`, candidate).Scan(&userID)
+		`), candidate).Scan(&userID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return candidate, nil
 		}
@@ -546,12 +576,17 @@ func (s *Server) boRoleExists(ctx context.Context, roleSlug string) (bool, error
 		return false, nil
 	}
 	var ok int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT 1
 		FROM bo_roles
 		WHERE slug = ? AND is_active = 1
 		LIMIT 1
-	`, roleSlug).Scan(&ok)
+	`, `
+		SELECT 1
+		FROM bo_roles
+		WHERE app.norm_ascii(slug) = app.norm_ascii(?) AND is_active = 1
+		LIMIT 1
+	`), roleSlug).Scan(&ok)
 	if err == nil {
 		return true, nil
 	}
@@ -575,7 +610,7 @@ func (s *Server) createMemberInvitationTokenTx(ctx context.Context, tx *sql.Tx, 
 	if in.InvalidateReason == "" {
 		in.InvalidateReason = "replaced"
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		UPDATE bo_member_invitation_tokens
 		SET invalidated_at = NOW(), invalidated_reason = ?
 		WHERE restaurant_id = ?
@@ -583,7 +618,15 @@ func (s *Server) createMemberInvitationTokenTx(ctx context.Context, tx *sql.Tx, 
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, in.InvalidateReason, in.RestaurantID, in.MemberID); err != nil {
+	`, `
+		UPDATE bo_member_invitation_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = ?
+		WHERE restaurant_id = ?
+			AND member_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), in.InvalidateReason, in.RestaurantID, in.MemberID); err != nil {
 		return "", time.Time{}, err
 	}
 
@@ -593,11 +636,11 @@ func (s *Server) createMemberInvitationTokenTx(ctx context.Context, tx *sql.Tx, 
 	}
 	expiresAt := time.Now().Add(invitationTokenTTL())
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, portableSQL(`
 		INSERT INTO bo_member_invitation_tokens
 			(restaurant_id, member_id, bo_user_id, role_slug, token_sha256, expires_at, created_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, in.RestaurantID, in.MemberID, in.BOUserID, in.RoleSlug, tokenSHA, expiresAt, nullableInt(in.CreatedByUserID))
+	`), in.RestaurantID, in.MemberID, in.BOUserID, in.RoleSlug, tokenSHA, sqldb.NaiveUTCArg(sqlDialect, expiresAt), nullableInt(in.CreatedByUserID))
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -605,7 +648,7 @@ func (s *Server) createMemberInvitationTokenTx(ctx context.Context, tx *sql.Tx, 
 }
 
 func (s *Server) createPasswordResetTokenTx(ctx context.Context, tx *sql.Tx, restaurantID, memberID, boUserID, createdByUserID int) (string, time.Time, error) {
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		UPDATE bo_password_reset_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'replaced'
 		WHERE restaurant_id = ?
@@ -613,7 +656,15 @@ func (s *Server) createPasswordResetTokenTx(ctx context.Context, tx *sql.Tx, res
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, restaurantID, memberID); err != nil {
+	`, `
+		UPDATE bo_password_reset_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'replaced'
+		WHERE restaurant_id = ?
+			AND member_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), restaurantID, memberID); err != nil {
 		return "", time.Time{}, err
 	}
 
@@ -623,11 +674,11 @@ func (s *Server) createPasswordResetTokenTx(ctx context.Context, tx *sql.Tx, res
 	}
 	expiresAt := time.Now().Add(passwordResetTokenTTL())
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, portableSQL(`
 		INSERT INTO bo_password_reset_tokens
 			(restaurant_id, member_id, bo_user_id, token_sha256, expires_at, created_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, restaurantID, memberID, boUserID, tokenSHA, expiresAt, nullableInt(createdByUserID))
+	`), restaurantID, memberID, boUserID, tokenSHA, sqldb.NaiveUTCArg(sqlDialect, expiresAt), nullableInt(createdByUserID))
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -804,7 +855,7 @@ func (s *Server) restaurantNameFallback(ctx context.Context, restaurantID int) s
 		}
 	}
 	var name string
-	if err := s.db.QueryRowContext(ctx, `SELECT name FROM restaurants WHERE id = ? LIMIT 1`, restaurantID).Scan(&name); err == nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT name FROM restaurants WHERE id = ? LIMIT 1`), restaurantID).Scan(&name); err == nil {
 		if n := strings.TrimSpace(name); n != "" {
 			return n
 		}
@@ -827,7 +878,7 @@ func (s *Server) loadMemberAccessRecord(ctx context.Context, restaurantID int, m
 		roleSlug  sql.NullString
 		roleLabel sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			m.id,
 			m.bo_user_id,
@@ -846,7 +897,26 @@ func (s *Server) loadMemberAccessRecord(ctx context.Context, restaurantID int, m
 		LEFT JOIN bo_roles br ON br.slug = ur.role
 		WHERE m.id = ? AND m.restaurant_id = ? AND m.is_active = 1
 		LIMIT 1
-	`, memberID, restaurantID).Scan(
+	`, `
+		SELECT
+			m.id,
+			m.bo_user_id,
+			m.first_name,
+			m.last_name,
+			m.email,
+			m.phone,
+			m.dni,
+			m.photo_url,
+			u.username,
+			ur.role,
+			br.label
+		FROM restaurant_members m
+		LEFT JOIN bo_users u ON u.id = m.bo_user_id
+		LEFT JOIN bo_user_restaurants ur ON ur.user_id = m.bo_user_id AND ur.restaurant_id = m.restaurant_id
+		LEFT JOIN bo_roles br ON app.norm_ascii(br.slug) = app.norm_ascii(ur.role)
+		WHERE m.id = ? AND m.restaurant_id = ? AND m.is_active = 1
+		LIMIT 1
+	`), memberID, restaurantID).Scan(
 		&rec.MemberID,
 		&boUserID,
 		&rec.FirstName,
@@ -949,21 +1019,25 @@ func (s *Server) handleBOMemberInvitationResend(w http.ResponseWriter, r *http.R
 		userID = user.UserID
 		username = user.Username
 		email = user.Email
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE restaurant_members
 			SET bo_user_id = ?
 			WHERE id = ? AND restaurant_id = ?
-		`, userID, rec.MemberID, a.ActiveRestaurantID); err != nil {
+		`), userID, rec.MemberID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error vinculando usuario")
 			return
 		}
 	}
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE role = VALUES(role)
-	`, userID, a.ActiveRestaurantID, rec.RoleSlug); err != nil {
+	`, `
+		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
+		VALUES (?, ?, ?)
+		ON CONFLICT (user_id, restaurant_id) DO UPDATE SET role = EXCLUDED.role
+	`), userID, a.ActiveRestaurantID, rec.RoleSlug); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error asignando rol")
 		return
 	}
@@ -1055,11 +1129,11 @@ func (s *Server) handleBOMemberPasswordResetSend(w http.ResponseWriter, r *http.
 		}
 		userID = user.UserID
 		email = user.Email
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE restaurant_members
 			SET bo_user_id = ?
 			WHERE id = ? AND restaurant_id = ?
-		`, userID, rec.MemberID, a.ActiveRestaurantID); err != nil {
+		`), userID, rec.MemberID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error vinculando usuario")
 			return
 		}
@@ -1100,7 +1174,7 @@ func (s *Server) fetchInvitationByToken(ctx context.Context, token string) (boIn
 		photoURL sql.NullString
 		username sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			t.id,
 			t.token_sha256,
@@ -1127,7 +1201,34 @@ func (s *Server) fetchInvitationByToken(ctx context.Context, token string) (boIn
 			AND t.invalidated_at IS NULL
 			AND t.expires_at > NOW()
 		LIMIT 1
-	`, tokenSHA).Scan(
+	`, `
+		SELECT
+			t.id,
+			t.token_sha256,
+			t.onboarding_guid,
+			t.expires_at,
+			t.restaurant_id,
+			t.member_id,
+			t.bo_user_id,
+			m.first_name,
+			m.last_name,
+			m.email,
+			m.phone,
+			m.dni,
+			m.photo_url,
+			u.username,
+			t.role_slug,
+			COALESCE(br.label, t.role_slug)
+		FROM bo_member_invitation_tokens t
+		JOIN restaurant_members m ON m.id = t.member_id AND m.restaurant_id = t.restaurant_id AND m.is_active = 1
+		JOIN bo_users u ON u.id = t.bo_user_id
+		LEFT JOIN bo_roles br ON app.norm_ascii(br.slug) = app.norm_ascii(t.role_slug)
+		WHERE app.norm_ascii(t.token_sha256) = app.norm_ascii(?)
+			AND t.used_at IS NULL
+			AND t.invalidated_at IS NULL
+			AND t.expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		LIMIT 1
+	`), tokenSHA).Scan(
 		&rec.TokenID,
 		&rec.TokenSHA,
 		&rec.OnboardingGUID,
@@ -1175,7 +1276,7 @@ func (s *Server) fetchInvitationByGUID(ctx context.Context, guid string) (boInvi
 		photoURL sql.NullString
 		username sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			t.id,
 			t.token_sha256,
@@ -1202,7 +1303,34 @@ func (s *Server) fetchInvitationByGUID(ctx context.Context, guid string) (boInvi
 			AND t.invalidated_at IS NULL
 			AND t.expires_at > NOW()
 		LIMIT 1
-	`, guid).Scan(
+	`, `
+		SELECT
+			t.id,
+			t.token_sha256,
+			t.onboarding_guid,
+			t.expires_at,
+			t.restaurant_id,
+			t.member_id,
+			t.bo_user_id,
+			m.first_name,
+			m.last_name,
+			m.email,
+			m.phone,
+			m.dni,
+			m.photo_url,
+			u.username,
+			t.role_slug,
+			COALESCE(br.label, t.role_slug)
+		FROM bo_member_invitation_tokens t
+		JOIN restaurant_members m ON m.id = t.member_id AND m.restaurant_id = t.restaurant_id AND m.is_active = 1
+		JOIN bo_users u ON u.id = t.bo_user_id
+		LEFT JOIN bo_roles br ON app.norm_ascii(br.slug) = app.norm_ascii(t.role_slug)
+		WHERE app.norm_ascii(t.onboarding_guid) = app.norm_ascii(?)
+			AND t.used_at IS NULL
+			AND t.invalidated_at IS NULL
+			AND t.expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		LIMIT 1
+	`), guid).Scan(
 		&rec.TokenID,
 		&rec.TokenSHA,
 		&rec.OnboardingGUID,
@@ -1246,21 +1374,21 @@ func (s *Server) ensureInvitationGUID(ctx context.Context, invitationID int64, c
 	if err != nil {
 		return "", err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE bo_member_invitation_tokens
 		SET onboarding_guid = ?
 		WHERE id = ? AND onboarding_guid IS NULL
-	`, guid, invitationID)
+	`), []any{guid, invitationID}...)
 	if err != nil {
 		return "", err
 	}
 	var stored sql.NullString
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT onboarding_guid
 		FROM bo_member_invitation_tokens
 		WHERE id = ?
 		LIMIT 1
-	`, invitationID).Scan(&stored); err != nil {
+	`), invitationID).Scan(&stored); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(stored.String) == "" {
@@ -1436,11 +1564,11 @@ func (s *Server) handleBOInvitationOnboardingProfile(w http.ResponseWriter, r *h
 		photoURL = strings.TrimSpace(*req.PhotoURL)
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE restaurant_members
 		SET first_name = ?, last_name = ?, photo_url = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, firstName, lastName, nullableString(photoURL), rec.MemberID, rec.RestaurantID)
+	`), firstName, lastName, nullableString(photoURL), rec.MemberID, rec.RestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando perfil")
 		return
@@ -1521,11 +1649,11 @@ func (s *Server) handleBOInvitationOnboardingAvatar(w http.ResponseWriter, r *ht
 		return
 	}
 	avatarURL := s.bunnyMembersPullURL(ctx, rec.RestaurantID, objectPath)
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE restaurant_members
 		SET photo_url = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, avatarURL, rec.MemberID, rec.RestaurantID)
+	`), avatarURL, rec.MemberID, rec.RestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar el avatar")
 		return
@@ -1604,23 +1732,30 @@ func (s *Server) handleBOInvitationOnboardingPassword(w http.ResponseWriter, r *
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		UPDATE bo_users
 		SET password_hash = ?, must_change_password = 0
 		WHERE id = ?
-	`, string(hash), rec.BOUserID); err != nil {
+	`), string(hash), rec.BOUserID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar password")
 		return
 	}
 
-	res, err := tx.ExecContext(r.Context(), `
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_member_invitation_tokens
 		SET used_at = NOW(), used_ip = ?, used_user_agent = ?
 		WHERE id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, clientIP(r), ua, rec.TokenID)
+	`, `
+		UPDATE bo_member_invitation_tokens
+		SET used_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), used_ip = ?, used_user_agent = ?
+		WHERE id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), clientIP(r), ua, rec.TokenID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo finalizar onboarding")
 		return
@@ -1631,14 +1766,24 @@ func (s *Server) handleBOInvitationOnboardingPassword(w http.ResponseWriter, r *
 		return
 	}
 
-	_, _ = tx.ExecContext(r.Context(), `
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_password_reset_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'password-updated'
 		WHERE bo_user_id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, rec.BOUserID)
+	`, `
+		UPDATE bo_password_reset_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'password-updated'
+		WHERE bo_user_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), rec.BOUserID)
+		return e
+	})
 
 	if err := tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error finalizando onboarding")
@@ -1664,7 +1809,7 @@ func (s *Server) fetchPasswordResetByToken(ctx context.Context, token string) (b
 		photoURL sql.NullString
 		username sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			t.id,
 			t.token_sha256,
@@ -1691,7 +1836,34 @@ func (s *Server) fetchPasswordResetByToken(ctx context.Context, token string) (b
 			AND t.invalidated_at IS NULL
 			AND t.expires_at > NOW()
 		LIMIT 1
-	`, tokenSHA).Scan(
+	`, `
+		SELECT
+			t.id,
+			t.token_sha256,
+			t.expires_at,
+			t.restaurant_id,
+			t.member_id,
+			t.bo_user_id,
+			m.first_name,
+			m.last_name,
+			m.email,
+			m.phone,
+			m.dni,
+			m.photo_url,
+			u.username,
+			ur.role,
+			COALESCE(br.label, ur.role)
+		FROM bo_password_reset_tokens t
+		JOIN restaurant_members m ON m.id = t.member_id AND m.restaurant_id = t.restaurant_id AND m.is_active = 1
+		JOIN bo_users u ON u.id = t.bo_user_id
+		LEFT JOIN bo_user_restaurants ur ON ur.user_id = t.bo_user_id AND ur.restaurant_id = t.restaurant_id
+		LEFT JOIN bo_roles br ON app.norm_ascii(br.slug) = app.norm_ascii(ur.role)
+		WHERE app.norm_ascii(t.token_sha256) = app.norm_ascii(?)
+			AND t.used_at IS NULL
+			AND t.invalidated_at IS NULL
+			AND t.expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		LIMIT 1
+	`), tokenSHA).Scan(
 		&rec.TokenID,
 		&rec.TokenSHA,
 		&rec.ExpiresAt,
@@ -1817,14 +1989,21 @@ func (s *Server) handleBOPasswordResetConfirm(w http.ResponseWriter, r *http.Req
 	// serializes concurrent confirmations: only the request that successfully
 	// claims the token may mutate the account (otherwise a losing request could
 	// overwrite the winner's password while reporting an invalid token).
-	res, err := tx.ExecContext(r.Context(), `
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_password_reset_tokens
 		SET used_at = NOW(), used_ip = ?, used_user_agent = ?
 		WHERE id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, clientIP(r), ua, rec.TokenID)
+	`, `
+		UPDATE bo_password_reset_tokens
+		SET used_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), used_ip = ?, used_user_agent = ?
+		WHERE id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), clientIP(r), ua, rec.TokenID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo finalizar reset")
 		return
@@ -1835,23 +2014,33 @@ func (s *Server) handleBOPasswordResetConfirm(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		UPDATE bo_users
 		SET password_hash = ?, must_change_password = 0
 		WHERE id = ?
-	`, string(hash), rec.BOUserID); err != nil {
+	`), string(hash), rec.BOUserID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar password")
 		return
 	}
 
-	_, _ = tx.ExecContext(r.Context(), `
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_member_invitation_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'password-reset'
 		WHERE bo_user_id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, rec.BOUserID)
+	`, `
+		UPDATE bo_member_invitation_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'password-reset'
+		WHERE bo_user_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), rec.BOUserID)
+		return e
+	})
 
 	if err := tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error finalizando reset")

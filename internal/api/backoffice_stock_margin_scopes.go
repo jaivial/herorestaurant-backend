@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // marginFloatPtr is the non-test address-of helper for band bounds.
@@ -198,25 +199,24 @@ func (s *Server) handleBOStockMarginScopePut(w http.ResponseWriter, r *http.Requ
 
 	var scopeID int64
 	row := tx.QueryRowContext(ctx,
-		`SELECT id FROM stock_margin_scopes WHERE restaurant_id=? AND scope_kind=? AND scope_key=?`,
+		nativeSQL(`SELECT id FROM stock_margin_scopes WHERE restaurant_id=? AND scope_kind=? AND scope_key=?`, `SELECT id FROM stock_margin_scopes WHERE restaurant_id=? AND scope_kind=? AND app.norm_ascii(scope_key) = app.norm_ascii(?)`),
 		a.ActiveRestaurantID, in.ScopeKind, in.ScopeKey)
 	if err := row.Scan(&scopeID); err != nil {
 		if err != sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error al leer el scope")
 			return
 		}
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO stock_margin_scopes (restaurant_id,scope_kind,scope_key,label,target_food_cost_pct)
-			 VALUES (?,?,?,?,?)`,
-			a.ActiveRestaurantID, in.ScopeKind, in.ScopeKey, in.Label, in.TargetFoodCostPct)
+		newScopeID, err := sqldb.InsertID(ctx, sqlDialect, tx,
+			portableSQL(`INSERT INTO stock_margin_scopes (restaurant_id,scope_kind,scope_key,label,target_food_cost_pct)
+			 VALUES (?,?,?,?,?)`), "id", a.ActiveRestaurantID, in.ScopeKind, in.ScopeKey, in.Label, in.TargetFoodCostPct)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "No se pudo crear el scope")
 			return
 		}
-		scopeID, _ = res.LastInsertId()
+		scopeID = newScopeID
 	} else {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE stock_margin_scopes SET label=?, target_food_cost_pct=? WHERE id=?`,
+			portableSQL(`UPDATE stock_margin_scopes SET label=?, target_food_cost_pct=? WHERE id=?`),
 			in.Label, in.TargetFoodCostPct, scopeID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar el scope")
 			return
@@ -224,15 +224,15 @@ func (s *Server) handleBOStockMarginScopePut(w http.ResponseWriter, r *http.Requ
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM stock_margin_scope_bands WHERE restaurant_id=? AND scope_id=?`,
+		portableSQL(`DELETE FROM stock_margin_scope_bands WHERE restaurant_id=? AND scope_id=?`),
 		a.ActiveRestaurantID, scopeID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al reemplazar bandas")
 		return
 	}
 	for i, b := range bands {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO stock_margin_scope_bands (restaurant_id,scope_id,zone,min_food_cost_pct,max_food_cost_pct,sort_order)
-			 VALUES (?,?,?,?,?,?)`,
+			portableSQL(`INSERT INTO stock_margin_scope_bands (restaurant_id,scope_id,zone,min_food_cost_pct,max_food_cost_pct,sort_order)
+			 VALUES (?,?,?,?,?,?)`),
 			a.ActiveRestaurantID, scopeID, b.Zone, b.Min, b.Max, i); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "No se pudo guardar una banda")
 			return
@@ -254,7 +254,7 @@ func (s *Server) handleBOStockMarginScopeDelete(w http.ResponseWriter, r *http.R
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	res, err := s.db.ExecContext(r.Context(),
-		`DELETE FROM stock_margin_scopes WHERE restaurant_id=? AND id=?`,
+		portableSQL(`DELETE FROM stock_margin_scopes WHERE restaurant_id=? AND id=?`),
 		a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al borrar el scope")
@@ -271,11 +271,11 @@ func (s *Server) handleBOStockMarginScopeDelete(w http.ResponseWriter, r *http.R
 // map keyed by "KIND:KEY" for O(1) resolution. Used by costing + resolve.
 func (s *Server) loadAllMarginScopes(restaurantID int) (map[string][]stockMarginBand, error) {
 	rows, err := s.db.Query(
-		`SELECT sc.scope_kind, sc.scope_key, b.zone, b.min_food_cost_pct, b.max_food_cost_pct, b.sort_order, sc.is_active
+		portableSQL(`SELECT sc.scope_kind, sc.scope_key, b.zone, b.min_food_cost_pct, b.max_food_cost_pct, b.sort_order, sc.is_active
 		 FROM stock_margin_scopes sc
 		 JOIN stock_margin_scope_bands b ON b.scope_id=sc.id AND b.restaurant_id=sc.restaurant_id
 		 WHERE sc.restaurant_id=?
-		 ORDER BY sc.scope_kind, sc.scope_key, b.sort_order`, restaurantID)
+		 ORDER BY sc.scope_kind, sc.scope_key, b.sort_order`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -313,9 +313,9 @@ func (s *Server) handleBOStockMarginScopesList(w http.ResponseWriter, r *http.Re
 		return
 	}
 	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT id, scope_kind, scope_key, label, target_food_cost_pct
+		nativeSQL(`SELECT id, scope_kind, scope_key, label, target_food_cost_pct
 		 FROM stock_margin_scopes WHERE restaurant_id=?
-		 ORDER BY FIELD(scope_kind,'GLOBAL','COMIDA_TYPE','COMIDA_CATEGORY','STOCK_CATEGORY'), label`, a.ActiveRestaurantID)
+		 ORDER BY FIELD(scope_kind,'GLOBAL','COMIDA_TYPE','COMIDA_CATEGORY','STOCK_CATEGORY'), label`, `SELECT id, scope_kind, scope_key, label, target_food_cost_pct FROM stock_margin_scopes WHERE restaurant_id=? ORDER BY CASE scope_kind WHEN 'GLOBAL' THEN 1 WHEN 'COMIDA_TYPE' THEN 2 WHEN 'COMIDA_CATEGORY' THEN 3 WHEN 'STOCK_CATEGORY' THEN 4 ELSE 0 END, label COLLATE "es-x-icu"`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al cargar scopes")
 		return
@@ -341,9 +341,9 @@ func (s *Server) handleBOStockMarginScopesList(w http.ResponseWriter, r *http.Re
 	// Attach bands per scope.
 	for i := range views {
 		brows, err := s.db.QueryContext(r.Context(),
-			`SELECT zone, min_food_cost_pct, max_food_cost_pct, sort_order
+			portableSQL(`SELECT zone, min_food_cost_pct, max_food_cost_pct, sort_order
 			 FROM stock_margin_scope_bands WHERE restaurant_id=? AND scope_id=?
-			 ORDER BY sort_order`, a.ActiveRestaurantID, views[i].ScopeID)
+			 ORDER BY sort_order`), a.ActiveRestaurantID, views[i].ScopeID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error al cargar bandas")
 			return

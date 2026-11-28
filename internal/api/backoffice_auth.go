@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boLoginRequest struct {
@@ -87,7 +88,7 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		isSuper            int
 		mustChangePassword int
 	)
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT
 			id,
 			email,
@@ -105,7 +106,7 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 				ELSE 1
 			END ASC
 		LIMIT 1
-	`, identifier, identifier, identifier).Scan(&userID, &dbEmail, &dbUsername, &name, &hash, &isSuper, &mustChangePassword)
+	`), identifier, identifier, identifier).Scan(&userID, &dbEmail, &dbUsername, &name, &hash, &isSuper, &mustChangePassword)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -175,10 +176,10 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		ua = ua[:250]
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`
 		INSERT INTO bo_sessions (token_sha256, user_id, active_restaurant_id, expires_at, ip, user_agent)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, tokenSHA, userID, activeRestaurantID, expiresAt, ip, ua)
+	`), tokenSHA, userID, activeRestaurantID, expiresAt.UTC(), ip, ua) // naive UTC datetime column on both dialects
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando sesion")
 		return
@@ -213,7 +214,7 @@ func (s *Server) handleBOLogout(w http.ResponseWriter, r *http.Request) {
 	// Idempotent: always clear cookie.
 	if c, err := r.Cookie(boSessionCookieName); err == nil && strings.TrimSpace(c.Value) != "" {
 		token := strings.TrimSpace(c.Value)
-		_, _ = s.db.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE token_sha256 = ?", sha256Hex(token))
+		_, _ = s.db.ExecContext(r.Context(), nativeSQL("DELETE FROM bo_sessions WHERE token_sha256 = ?", "DELETE FROM bo_sessions WHERE app.norm_ascii(token_sha256) = app.norm_ascii(?)"), sha256Hex(token))
 		if s.sessionCache != nil {
 			s.sessionCache.invalidate(sha256Hex(token))
 		}
@@ -263,7 +264,7 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 	appVersion := a.User.AppVersion
 	if activeID == 0 || !restaurantInList(restaurants, activeID) {
 		activeID = restaurants[0].ID
-		_, _ = s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?", activeID, a.SessionID)
+		_, _ = s.db.ExecContext(r.Context(), portableSQL("UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?"), activeID, a.SessionID)
 		roleSlug, err = s.getBOUserRoleForRestaurant(r.Context(), a.User.ID, activeID, a.User.isSuperadmin)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo rol")
@@ -361,32 +362,52 @@ func (s *Server) handleBOSetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		UPDATE bo_users
 		SET password_hash = ?, must_change_password = 0
 		WHERE id = ?
-	`, string(hash), a.User.ID); err != nil {
+	`), string(hash), a.User.ID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar password")
 		return
 	}
 
-	_, _ = tx.ExecContext(r.Context(), `
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_password_reset_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'password-updated'
 		WHERE bo_user_id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, a.User.ID)
+	`, `
+		UPDATE bo_password_reset_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'password-updated'
+		WHERE bo_user_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), a.User.ID)
+		return e
+	})
 
-	_, _ = tx.ExecContext(r.Context(), `
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_member_invitation_tokens
 		SET invalidated_at = NOW(), invalidated_reason = 'password-updated'
 		WHERE bo_user_id = ?
 			AND used_at IS NULL
 			AND invalidated_at IS NULL
 			AND expires_at > NOW()
-	`, a.User.ID)
+	`, `
+		UPDATE bo_member_invitation_tokens
+		SET invalidated_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), invalidated_reason = 'password-updated'
+		WHERE bo_user_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+	`), a.User.ID)
+		return e
+	})
 
 	if err := tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando password")
@@ -434,7 +455,7 @@ func (s *Server) handleBOSetActiveRestaurant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?", req.RestaurantID, a.SessionID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?"), req.RestaurantID, a.SessionID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando sesion")
 		return
 	}
@@ -486,7 +507,7 @@ func (s *Server) ensureBootstrapAdmin(ctx context.Context) error {
 	}
 
 	var userID int
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM bo_users WHERE email = ? LIMIT 1", email).Scan(&userID)
+	err := s.db.QueryRowContext(ctx, nativeSQL("SELECT id FROM bo_users WHERE email = ? LIMIT 1", "SELECT id FROM bo_users WHERE app.norm_ascii(email) = app.norm_ascii(?) LIMIT 1"), email).Scan(&userID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -496,22 +517,31 @@ func (s *Server) ensureBootstrapAdmin(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		res, err := s.db.ExecContext(ctx, `
+		id, err := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`
 			INSERT INTO bo_users (email, name, password_hash, is_superadmin)
 			VALUES (?, ?, ?, 1)
-		`, email, name, string(hash))
+		`), "id", email, name, string(hash))
 		if err != nil {
 			return err
 		}
-		id, _ := res.LastInsertId()
 		userID = int(id)
 	}
 
 	// Ensure at least restaurant #1 is assigned.
-	_, _ = s.db.ExecContext(ctx, `
-		INSERT IGNORE INTO bo_user_restaurants (user_id, restaurant_id, role)
+	// Best effort as in the source (bootstrap continues), but no longer
+	// silent: duplicate membership is the only no-op; an FK failure (no
+	// restaurant #1) or any other error is logged (repair-ignore3).
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
+		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
 		VALUES (?, 1, 'admin')
-	`, userID)
+		ON DUPLICATE KEY UPDATE user_id = user_id
+	`, `
+		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
+		VALUES (?, 1, 'admin')
+		ON CONFLICT (user_id, restaurant_id) DO NOTHING
+	`), userID); err != nil {
+		log.Printf("[bo_bootstrap] assign restaurant 1 to user %d failed: %v", userID, err)
+	}
 
 	return nil
 }
@@ -522,15 +552,15 @@ func (s *Server) listUserRestaurants(ctx context.Context, userID int, isSuperadm
 		err  error
 	)
 	if isSuperadmin {
-		rows, err = s.db.QueryContext(ctx, "SELECT id, slug, name FROM restaurants ORDER BY name ASC, id ASC")
+		rows, err = s.db.QueryContext(ctx, portableSQL("SELECT id, slug, name FROM restaurants ORDER BY name ASC, id ASC"))
 	} else {
-		rows, err = s.db.QueryContext(ctx, `
+		rows, err = s.db.QueryContext(ctx, portableSQL(`
 			SELECT r.id, r.slug, r.name
 			FROM restaurants r
 			JOIN bo_user_restaurants ur ON ur.restaurant_id = r.id
 			WHERE ur.user_id = ?
 			ORDER BY r.name ASC, r.id ASC
-		`, userID)
+		`), userID)
 	}
 	if err != nil {
 		return nil, err
@@ -562,12 +592,12 @@ func (s *Server) getBOUserRoleForRestaurant(ctx context.Context, userID, restaur
 		return "root", nil
 	}
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT role
 		FROM bo_user_restaurants
 		WHERE user_id = ? AND restaurant_id = ?
 		LIMIT 1
-	`, userID, restaurantID).Scan(&raw)
+	`), userID, restaurantID).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "admin", nil

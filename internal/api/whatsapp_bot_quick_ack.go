@@ -27,18 +27,27 @@ func (s *Server) botQuickAck(restaurantID int, msg botWebhookMessage) {
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 		text := s.botQuickAckText(ctx, restaurantID, msg)
+		cancel()
 		if text == "" {
+			botCheckpoint("wa_bot_quick_ack_v1", "restaurant_id=%d message_id=%s decision=empty", restaurantID, msg.MessageID)
 			return
 		}
-		gw, ok := s.botGatewayFor(ctx, restaurantID)
+		// Text generation and delivery have separate budgets. Reusing the LLM
+		// context meant the heuristic fallback after a timeout always tried to
+		// send with an already-expired context and silently disappeared.
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer sendCancel()
+		gw, ok := s.botGatewayFor(sendCtx, restaurantID)
 		if !ok {
+			botCheckpoint("wa_bot_quick_ack_v1", "restaurant_id=%d message_id=%s decision=no_gateway", restaurantID, msg.MessageID)
 			return
 		}
-		if s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "quick_ack") == nil {
-			botCheckpoint("wa_bot_quick_ack_v1", "restaurant_id=%d sender=%s chars=%d", restaurantID, msg.Sender, len(text))
+		if err := s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, text, "quick_ack"); err != nil {
+			botCheckpoint("wa_bot_quick_ack_v1", "restaurant_id=%d message_id=%s decision=send_failed class=%s", restaurantID, msg.MessageID, botErrClass(err))
+			return
 		}
+		botCheckpoint("wa_bot_quick_ack_v1", "restaurant_id=%d sender=%s message_id=%s chars=%d decision=sent", restaurantID, msg.Sender, msg.MessageID, len(text))
 	}()
 }
 
@@ -49,6 +58,12 @@ func (s *Server) botQuickAckText(ctx context.Context, restaurantID int, msg botW
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
 		return botQuickAckHeuristic("")
+	}
+	// Long operational requests (a whole menu/invoice) do not need a model to
+	// acknowledge receipt. Keep the quick ack quick and avoid spending its
+	// entire budget reasoning over thousands of characters.
+	if len([]rune(text)) > 500 {
+		return botQuickAckHeuristic(text)
 	}
 	system := "Eres el asistente de reservas de un restaurante por WhatsApp. Acaba de llegarte este mensaje y vas a empezar a atenderlo en unos segundos. " +
 		"Escribe UNA sola frase de acuse muy breve (máximo 12 palabras) en el idioma del mensaje, tipo 'Vale, voy a mirar lo de tu reserva'. " +

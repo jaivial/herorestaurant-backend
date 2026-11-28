@@ -1,0 +1,27 @@
+{
+ "coordination_id": "plan_revision_float_md_v1",
+ "status": "PROPOSAL ONLY - imported r4/r5 proof schema, data and plan.sql NOT modified",
+ "source": {
+  "table": "group_menu_wines_v2",
+  "column": "precio",
+  "column_type": "float(10,2)",
+  "note": "only FLOAT(M,D) column in the 253-table source (other float/double: assistant_memory_* weight double without (M,D))"
+ },
+ "mysql_semantics_known": "FLOAT(M,D) is single precision; on write MySQL rounds the value to D=2 decimals before storing as float32 and rejects/clips per strict mode for |x| beyond M digits",
+ "mysql_semantics_not_established_statically": "exact rounding mode of the D-rounding (half-away vs half-even on the double) is server-implementation detail not provable from this repository without the server source/runtime",
+ "current_plan_mapping": "real (no D-rounding, no M range check)",
+ "gap": "schema-level: PG stores the unrounded float32 of the parameter; app writes (wines_v2 insert, comida/backoffice_vinos/admin_vinos/assistant updates) pass float64 unchanged",
+ "options": [
+  "A (schema): new plan revision maps precio to real with a BEFORE INSERT/UPDATE trigger NEW.precio := round(NEW.precio::numeric, 2)::real plus CHECK abs(precio) < 1e8, AFTER confirming the MySQL rounding mode on a read-only server probe (coordinator)",
+  "B (app): explicit CAST(ROUND(CAST(? AS numeric), 2) AS real) at every PG write site of group_menu_wines_v2.precio - same rounding-mode prerequisite; scattered across 5 files",
+  "C (schema): numeric(10,2) - changes float32 read-back values, NOT faithful (rejected)"
+ ],
+ "recommendation": "A after rounding-mode confirmation; no app-level rounding applied in this checkpoint (avoids arbitrary double rounding)",
+ "app_write_sites_found": [
+  "internal/api/wines_v2.go (insert)",
+  "internal/api/comida.go (wine update, dynamic SET)",
+  "internal/api/backoffice_vinos.go:369 (unported)",
+  "internal/api/admin_vinos.go:153 (unported)",
+  "internal/api/assistant_catalog_tools.go:360 (unported)"
+ ]
+}

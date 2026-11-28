@@ -1,0 +1,58 @@
+Counter({'OK': 149, 'MANUAL': 43, 'MISMATCH': 14})
+internal/api/backoffice_accounting_exports.go	355	accounting_exports	payload_hash	payload_hash<-hashText	MISMATCH: payload_hash: no ? for column
+internal/api/backoffice_members.go	355	restaurant_members	email	nullableString(email)	MANUAL ($n placeholders)
+internal/api/backoffice_pos.go	664	pos_daily_sequences	sequence_type	sequence_type<-"TICKET"	MISMATCH: sequence_type: no ? for column
+internal/api/backoffice_pos_catalog.go	104	pos_products	sku	stockNullableString(in.SKU)	MANUAL (slice/nested args)
+internal/api/backoffice_pos_modifiers.go	495	pos_modifier_groups	name	n	MANUAL (slice/nested args)
+internal/api/backoffice_pos_modifiers.go	646	pos_modifier_options	name	n	MANUAL (slice/nested args)
+internal/api/backoffice_pos_operations.go	79	pos_service_periods	name	spArgs[0]	MANUAL (slice/nested args)
+internal/api/backoffice_pos_packs.go	367	pos_packs	name	n	MANUAL (slice/nested args)
+internal/api/backoffice_pos_reports.go	285	pos_stock_exceptions	replay_idempotency_key	in.IdempotencyKey+"-"+strconv.FormatInt(exceptionID, 10)	MANUAL (slice/nested args)
+internal/api/backoffice_pos_split.go	57	pos_product_categories	name	posChangedRowArgs([]any{strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive)}, a.ActiveRestaurantID, id)[0]	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2259	restaurant_areas	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2281	restaurant_areas	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2297	restaurant_areas	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2761	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2807	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2841	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2872	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2900	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2925	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2950	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2972	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/backoffice_premium.go	2994	restaurant_tables	name	nameArg	MANUAL (slice/nested args)
+internal/api/booking_reminders.go	355	booking_reminder_deliveries	delivery_key	delivery_key<-key	MISMATCH: delivery_key: no ? for column
+internal/api/site_builder.go	315	site_builder_pages	id,site_id,slug	id<-homePageID;site_id<-id;slug<-"/"	MISMATCH: slug: no ? for column
+internal/api/site_builder_registrar.go	299	site_builder_domain_mappings	domain,id	mapArgs[2];mapArgs[0]	MANUAL (slice/nested args)
+internal/api/backoffice_config.go	515	restaurant_floors	scope_key	scope_key<-"global"	MISMATCH: scope_key: no ? for column
+internal/api/backoffice_config.go	610	restaurant_floors	scope_key	scope_key<-"global"	MISMATCH: scope_key: no ? for column
+internal/api/backoffice_technical_sheet_duplicate.go	73	stock_item_units	code	code<-"ud"	MISMATCH: code: no ? for column
+internal/api/backoffice_technical_sheet_ensure.go	120	stock_item_units	code	code<-"ud"	MISMATCH: code: no ? for column
+internal/api/backoffice_salons.go	320	restaurant_salons	scope_key	wkScopeKeyText(req.Date)	MANUAL (slice/nested args)
+internal/api/backoffice_salons.go	320	restaurant_salons	name	name<-req.Name	MISMATCH: arg count 8 vs ? 9
+internal/api/backoffice_salons.go	411	restaurant_salons	name	req.Name	MANUAL (slice/nested args)
+internal/api/floors_date.go	139	restaurant_floors	scope_key	scope_key<-wkScopeKeyText(date)	MISMATCH: scope_key: no ? for column
+internal/api/backoffice_stock_recipes.go	267	stock_recipes	name	strings.TrimSpace(in.Name)	MANUAL (slice/nested args)
+internal/api/backoffice_comida_categories.go	759	comida_categories	food_type	next.FoodType	MANUAL (slice/nested args)
+internal/api/backoffice_comida_categories.go	759	comida_categories	slug	next.Slug	MANUAL (slice/nested args)
+internal/api/backoffice_stock_analytics.go	508	stock_vat_rates	name	strings.TrimSpace(in.Name)	MANUAL (slice/nested args)
+internal/api/backoffice_stock_suppliers.go	142	stock_suppliers	name	name	MANUAL (slice/nested args)
+internal/api/menu_public_seo_handlers.go	98	menus	seo_slug	values[0]	MANUAL (slice/nested args)
+internal/api/backoffice_member_access_flows.go	384	bo_users	username	resolved	MANUAL (slice/nested args)
+internal/api/backoffice_member_access_flows.go	464	bo_users	username	resolvedUsername	MANUAL (slice/nested args)
+internal/api/backoffice_member_access_flows.go	1459	bo_member_invitation_tokens	onboarding_guid	guid	MANUAL (slice/nested args)
+internal/api/website_builder_handlers.go	1556	website_pages	slug	slug<-""	MISMATCH: slug: no ? for column
+internal/api/seo_item_routes.go	660	seo_item_routes	slug	row.slug	MANUAL (slice/nested args)
+internal/api/backoffice_pos_kitchen.go	109	pos_kitchen_stations	name	posChangedRowArgs([]any{strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive)}, a.ActiveRestaurantID, id)[0]	MANUAL (slice/nested args)
+internal/api/backoffice_pos_checkout.go	389	pos_tickets	checkout_idempotency_key	idempotencyKey	MANUAL (slice/nested args)
+internal/api/instatic_manager.go	944	site_builder_domain_mappings	domain,id	mapArgs[1];mapArgs[0]	MANUAL (no adjacent wkPG ON text)
+internal/api/backoffice_stock.go	237	stock_warehouses	code	"MAIN"	MANUAL (shape)
+internal/api/backoffice_stock.go	350	stock_warehouses	code	stockNullableString(in.Code)	MANUAL (slice/nested args)
+internal/api/backoffice_stock.go	473	stock_categories	name	strings.TrimSpace(in.Name)	MANUAL (slice/nested args)
+internal/api/backoffice_stock.go	785	stock_items	sku,name	stockNullableString(in.SKU);strings.TrimSpace(in.Name)	MANUAL (slice/nested args)
+internal/api/backoffice_pos_customers.go	208	pos_customers	email	nullIfEmpty(in.Email)	MANUAL (slice/nested args)
+internal/api/backoffice_pos_customers.go	208	pos_customers	phone	nullIfEmpty(in.Phone)	MANUAL (slice/nested args)
+internal/api/backoffice_pos_fiscal.go	396	pos_fiscal_documents	full_number	full_number<-fullNumber	MISMATCH: full_number bound=nextNumber key_from=fullNumber; arg count 29 vs ? 27
+internal/api/assistant_pos_tools.go	73	pos_tickets	ticket_number,creation_idempotency_key	args[2];args[3]	MANUAL (slice/nested args)
+internal/api/assistant_pos_tools.go	86	pos_payments	idempotency_key	idempotency_key<-in.IdempotencyKey	MISMATCH: idempotency_key bound=in.AmountCents key_from=in.IdempotencyKey; arg count 9 vs ? 8
+internal/api/assistant_pos_tools.go	95	pos_refunds	idempotency_key	idempotency_key<-in.IdempotencyKey	MISMATCH: idempotency_key bound=mysqlUpperEnumArg(in.PaymentMethod) key_from=in.IdempotencyKey; arg count 10 vs ? 9

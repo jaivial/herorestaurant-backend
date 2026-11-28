@@ -108,7 +108,9 @@ func campaignParseNDR(raw, ownMailbox string) []campaignBounceEvent {
 		if m := campaignNDRDiagRe.FindStringSubmatch(seg); m != nil {
 			ev.Diag = strings.TrimSpace(m[1])
 			if len(ev.Diag) > 300 {
-				ev.Diag = ev.Diag[:300]
+				// 300-byte cut kept, never mid-character (a split rune made PG
+				// reject the event and skip its suppression; repair-ignore1).
+				ev.Diag = utf8BytePrefix(ev.Diag, 300)
 			}
 		}
 		ev.Key = campaignBounceKey(msgID, addr, raw)
@@ -252,33 +254,66 @@ type campaignBounceSyncResult struct {
 	Scanned   int `json:"scanned"`
 	Known     int `json:"already_known"`
 	FreshHard int `json:"fresh_hard"`
-	FreshSoft int `json:"fresh_soft"`
-	Ignored   int `json:"ignored"`
+	// EventStoreFailed: evidence row not stored, suppression still applied.
+	EventStoreFailed int `json:"event_store_failed"`
+	// SuppressFailed: do-not-contact write failed (logged, no address).
+	SuppressFailed int `json:"suppress_failed"`
+	FreshSoft      int `json:"fresh_soft"`
+	Ignored        int `json:"ignored"`
 }
 
 // campaignSuppressBounce records one fresh hard/soft event in the legacy
 // invalid_emails list (hard only) and in campaign_suppressions. INSERT IGNORE
 // on the unique key keeps an existing baja or earlier verdict untouched; a hard bounce only upgrades an earlier pending_verify row to invalid.
-func (s *Server) campaignSuppressBounce(ctx context.Context, restaurantID int, ev campaignBounceEvent) {
+func (s *Server) campaignSuppressBounce(ctx context.Context, restaurantID int, ev campaignBounceEvent) error {
+	// Never truncate the address into another recipient: an unstorable target
+	// is already blocked by campaignSuppressionFilter (fail closed).
+	if _, ok := campaignSuppressionKey("email", ev.Address); !ok {
+		slog.Default().Warn("campaign.bounce.target_unstorable", "restaurant_id", restaurantID, "bytes", len(ev.Address))
+		return nil
+	}
 	if ev.Class == "hard" {
-		_, _ = s.db.ExecContext(ctx, `
+		// Source quirk kept: an aggregate without GROUP BY always yields one
+		// row, so the WHERE-level NOT EXISTS does not stop the insert (id_booking
+		// 0 when no booking matches). Same on PG. Select-list params are typed.
+		_, _ = s.db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO invalid_emails (id_booking, email, reason)
 			SELECT COALESCE(MAX(id), 0), ?, 'rebote Titan (direccion inexistente)' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
 			  AND NOT EXISTS (SELECT 1 FROM invalid_emails WHERE LOWER(TRIM(email)) = ?)
-		`, ev.Address, restaurantID, ev.Address, ev.Address)
-		_, _ = s.db.ExecContext(ctx, `
+		`, `
+			INSERT INTO invalid_emails (id_booking, email, reason)
+			SELECT COALESCE(MAX(id), 0), CAST(? AS text), 'rebote Titan (direccion inexistente)' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
+			  AND NOT EXISTS (SELECT 1 FROM invalid_emails WHERE LOWER(TRIM(email)) = ?)
+		`), ev.Address, restaurantID, ev.Address, ev.Address)
+		// ODKU -> ON CONFLICT on uq_suppression (the only reachable unique key;
+		// id is generated). MySQL assigns reason first while source still holds
+		// the old value, so evaluating both CASEs on the old row is identical.
+		_, err := s.db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 			SELECT ?, 'email', ?, MAX(id), CONCAT('email no valido: rebote Titan ', ?), 'bounce' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
 			ON DUPLICATE KEY UPDATE
 				reason = IF(source = 'pending_verify', VALUES(reason), reason),
 				source = IF(source = 'pending_verify', 'bounce', source)
-		`, restaurantID, ev.Address, ev.Status, restaurantID, ev.Address)
-		return
+		`, `
+			INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+			SELECT CAST(? AS integer), 'email', CAST(? AS text), MAX(id), 'email no valido: rebote Titan ' || CAST(? AS text), 'bounce' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
+			ON CONFLICT (restaurant_id, app.norm(channel), app.norm(target)) DO UPDATE SET
+				reason = CASE WHEN campaign_suppressions.source = 'pending_verify' THEN EXCLUDED.reason ELSE campaign_suppressions.reason END,
+				source = CASE WHEN campaign_suppressions.source = 'pending_verify' THEN 'bounce' ELSE campaign_suppressions.source END
+		`), restaurantID, ev.Address, ev.Status, restaurantID, ev.Address)
+		return err
 	}
-	_, _ = s.db.ExecContext(ctx, `
+	// INSERT IGNORE breadth: uq_suppression duplicate + over-width target
+	// (190) / reason (255) truncation; no FK. PG mirrors exactly those.
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 		SELECT ?, 'email', ?, MAX(id), CONCAT('pendiente de verificar (bloqueado hasta decision): rebote no concluyente ', ?), 'pending_verify' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
-	`, restaurantID, ev.Address, ev.Status, restaurantID, ev.Address)
+	`, `
+		INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+		SELECT CAST(? AS integer), 'email', CAST(? AS text), MAX(id), LEFT('pendiente de verificar (bloqueado hasta decision): rebote no concluyente ' || CAST(? AS text), 255), 'pending_verify' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
+		ON CONFLICT (restaurant_id, app.norm(channel), app.norm(target)) DO NOTHING
+	`), restaurantID, ev.Address, ev.Status, restaurantID, ev.Address)
+	return err
 }
 
 // syncCampaignBounces reads the notices and applies the fresh ones. Safe to
@@ -302,18 +337,35 @@ func (s *Server) syncCampaignBounces(ctx context.Context, restaurantID int, sinc
 			res.Ignored++
 			continue
 		}
-		r, err := s.db.ExecContext(ctx, `
+		// INSERT IGNORE breadth: uq_bounce_event (restaurant_id, event_key)
+		// duplicate (RowsAffected 0 -> "known") + varchar truncation of the
+		// IMAP-derived strings; no FK. PG: ON CONFLICT on that key + LEFT to
+		// each declared width after NULLIF (MySQL order). OPEN: IMAP text cut
+		// at 300 BYTES can be invalid UTF-8 - MySQL IGNORE downgrades that to
+		// a warning, PG rejects (22021) and the event + its suppression are
+		// skipped. Not reproduced here (MySQL's stored value unproven).
+		r, err := s.db.ExecContext(ctx, nativeSQL(`
 			INSERT IGNORE INTO campaign_bounce_events (restaurant_id, event_key, address, status_code, class, diagnostic)
-			VALUES (?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''))`,
-			restaurantID, ev.Key, ev.Address, ev.Status, ev.Class, ev.Diag)
+			VALUES (?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''))`, `
+			INSERT INTO campaign_bounce_events (restaurant_id, event_key, address, status_code, class, diagnostic)
+			VALUES (?, LEFT(CAST(? AS text), 190), LEFT(CAST(? AS text), 190), LEFT(NULLIF(CAST(? AS text), ''), 16), LEFT(CAST(? AS text), 8), LEFT(NULLIF(CAST(? AS text), ''), 300))
+			ON CONFLICT (restaurant_id, app.norm_ascii(event_key)) DO NOTHING`),
+			restaurantID, ev.Key, ev.Address, ev.Status, ev.Class, campaignBounceDiagnosticForStore(ev.Diag))
+		// repair-suppression2: the evidence insert no longer gates the
+		// do-not-contact write. Autocommit statements on s.db (no shared tx,
+		// so no aborted-transaction/savepoint concern). Only a proven
+		// duplicate (RowsAffected 0) skips, as before.
 		if err != nil {
-			continue
-		}
-		if n, _ := r.RowsAffected(); n == 0 {
+			res.EventStoreFailed++
+			slog.Default().Warn("campaign.bounce.event_store_failed", "restaurant_id", restaurantID, "class", ev.Class, "err", err.Error())
+		} else if n, _ := r.RowsAffected(); n == 0 {
 			res.Known++
 			continue
 		}
-		s.campaignSuppressBounce(ctx, restaurantID, ev)
+		if err := s.campaignSuppressBounce(ctx, restaurantID, ev); err != nil {
+			res.SuppressFailed++
+			slog.Default().Warn("campaign.bounce.suppress_failed", "restaurant_id", restaurantID, "class", ev.Class, "err", err.Error())
+		}
 		if ev.Class == "hard" {
 			res.FreshHard++
 		} else {
@@ -370,7 +422,8 @@ func (s *Server) runCampaignBounceLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT restaurant_id FROM email_provider_config WHERE is_active = 1 AND provider <> 'gmail' AND smtp_host <> ''`)
+		// smtp_host <> '' : PAD SPACE makes an all-blank host equal '' on MySQL only (PAD SPACE gap).
+		rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT restaurant_id FROM email_provider_config WHERE is_active = 1 AND provider <> 'gmail' AND smtp_host <> ''`))
 		if err != nil {
 			continue
 		}

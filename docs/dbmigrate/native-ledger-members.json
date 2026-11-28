@@ -1,0 +1,166 @@
+{
+  "domain": "members_staff",
+  "inventory": "sql-inventory-r36.json (dbmigrate-r12 canonical basis)",
+  "repo_call_sites": 2472,
+  "repo_native_sites": 1219,
+  "repo_dynamic": 192,
+  "helper_internal_excluded": 8,
+  "prepared_stmt_calls_excluded": 3,
+  "audit_failures": 0,
+  "ledger": [
+    {
+      "file": "internal/api/backoffice_fichaje.go",
+      "sites": 27,
+      "native": 27,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_fichaje_realtime.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_member_access_flows.go",
+      "sites": 34,
+      "native": 34,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_members.go",
+      "sites": 13,
+      "native": 13,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_members_avatar.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/pre_shift_reminders.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/schedule_notifications.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "semantic_open": [
+    {
+      "site": "fichaje time model",
+      "note": "work_date/start_time/end_time and datetime params are naive Europe/Madrid wall-clock values computed in Go (time.Now().In(boMadridTZ)); DB stores them naive. MySQL TIMESTAMPDIFF(MINUTE) on CONCAT(date,' ',time) and PG naive (date+time) subtraction both ignore DST (a shift spanning a DST change differs by +-60 real minutes on both engines identically). Not converted to UTC/timestamptz."
+    },
+    {
+      "site": "minutes_worked expressions",
+      "note": "TIMESTAMPDIFF truncation toward zero -> trunc(EXTRACT(EPOCH ...)/60). MySQL GREATEST(0,NULL)=NULL (start_time NULL -> NOT NULL violation, strict error) preserved via CASE in a correlated subselect (PG GREATEST ignores NULLs). Entry patch '? IS NULL' typed CAST(? AS text)."
+    },
+    {
+      "site": "backoffice_members.go member PATCH",
+      "note": "RowsAffected==0 -> 404 'Miembro no encontrado'. MySQL CHANGED rows: identical re-save of an existing member returns 404 (source quirk). PG keeps it via ROW(8 cols COLLATE \"C\") IS DISTINCT FROM ROW(params). Not fixed."
+    },
+    {
+      "site": "member_contracts ODKU",
+      "note": "ON CONFLICT (restaurant_member_id) - uniq_member_contracts_member, only collidable key (not tenant-scoped, as source). weekly_hours float64 -> numeric(6,2) rounding QA pending (float->decimal family)."
+    },
+    {
+      "site": "fichaje_realtime labour cost",
+      "note": "MySQL decimal division with div_precision_increment 4 reproduced per division: minutes/60 ROUND 4, gross/monthly_hours ROUND 6 (2+4), pct/100 ROUND 6. Final sum scanned float64. Rounding mode half-up vs PG half-away identical for non-negative values; negative minutes would differ (not constrained by schema) - OPEN QA."
+    },
+    {
+      "site": "fichaje_realtime hour buckets",
+      "note": "HOUR(opened_at) of naive UTC pos_tickets.opened_at -> EXTRACT(HOUR) (UTC hour, as source - not Madrid). 5-minute bucket = hour + floor(minute/5)*5 (equal to FLOOR(TIME_TO_SEC/300)*300). GROUP BY 1; no ORDER BY on either (unspecified row order, consumer sorts / maps). NULL start_time hour group scans into string and errors on both."
+    },
+    {
+      "site": "ORDER BY nullable start_time",
+      "note": "listBOActiveEntries/listBOTimeEntriesByMemberAndDate: e.start_time nullable ASC -> NULLS FIRST (MySQL order). Name ordering CI collation pending."
+    },
+    {
+      "site": "concurrency",
+      "note": "Clock start = read active entry then INSERT, no lock/unique key on both engines (double-start race unchanged). Stop UPDATE by id has no end_time IS NULL guard (source)."
+    },
+    {
+      "site": "CONCAT",
+      "note": "PG CONCAT treats NULL as '' while MySQL returns NULL; every CONCAT here is over NOT NULL columns or COALESCE'd -> unreachable difference."
+    },
+    {
+      "site": "FORCE INDEX",
+      "note": "Optimizer hint dropped on PG (no semantic effect)."
+    },
+    {
+      "site": "deferred blocker (campaign2) bounce diagnostic invalid UTF-8",
+      "note": "Unchanged: remains cutover-blocking; no sanitizing implemented. Static grounding attempt: MySQL behaviour for invalid utf8mb4 under INSERT IGNORE is not documented in this repo; needs read-only source evidence/coordinator decision."
+    },
+    {
+      "site": "sqldb.TxStatementScope (new helper)",
+      "note": "PG aborts the whole transaction after any statement error; InnoDB rolls back only the failed statement. Wrapped in a SAVEPOINT only where the source deliberately continues after an error: bo_users INSERT duplicate -> retry SELECT; ignored username UPDATEs (x2); ignored token-invalidation UPDATEs after onboarding password / reset confirm (x2). MySQL path unchanged. Adds 3 helper-internal statements (excluded from the canonical count: 5 -> 8). SYSTEMIC OPEN: earlier ported domains were not audited for 'error swallowed then same tx continues' - needs a repo-wide review before cutover."
+    },
+    {
+      "site": "bo_users insert race retry",
+      "note": "With the savepoint, PG READ COMMITTED retry SELECT can see a concurrently committed user; MySQL REPEATABLE READ snapshot (already established by earlier reads in the tx) would not -> race case: MySQL returns the error, PG reuses the user. Non-race behaviour identical. OPEN isolation delta (code review only)."
+    },
+    {
+      "site": "invitation/reset token expires_at",
+      "note": "expiresAt is time.Now().Add(ttl) (process-local zone). MySQL driver (loc=UTC) stores the UTC wall clock; pgx would store the local wall clock -> bound via sqldb.NaiveUTCArg (t.UTC()) on PG. Fractional seconds: both engines round into timestamp(0); exact .5s tie rounding (MySQL half-up vs PG rint) unverified."
+    },
+    {
+      "site": "token single-use / expiry",
+      "note": "used_at/invalidated_at = NOW() and expires_at > NOW() on naive UTC timestamp(0) -> date_trunc('second',statement_timestamp()) AT TIME ZONE 'UTC'. Single-use claim UPDATE ... used_at IS NULL: NULL->value always changes, RowsAffected gate identical; concurrent confirm: loser re-checks the committed row on both engines (InnoDB locking read / PG READ COMMITTED) -> 0 rows. Code review only. Raw tokens never read; token_sha256 equality under ci_ai (hex, harmless)."
+    },
+    {
+      "site": "pre_shift_reminders DueShifts",
+      "note": "SOURCE QUIRK preserved: TIMESTAMP(work_date,start_time) is the Madrid wall clock while now/end time.Time are bound as the UTC wall clock (MySQL driver loc=UTC), so the window is offset by the UTC offset (1h/2h DST). PG binds NaiveUTCArg -> same comparison. Not fixed."
+    },
+    {
+      "site": "pre_shift Claim INSERT IGNORE",
+      "note": "Breadth: uniq_message_deliveries_delivery_key duplicate + varchar truncation (event 64, delivery_key 191; stock_digest keys can theoretically exceed 64) mirrored with LEFT; no FK; payload []byte -> CAST(? AS jsonb). Concurrent claim: unique key -> one winner on both engines. Other errors fall back to the COUNT path (source)."
+    },
+    {
+      "site": "ODKU",
+      "note": "member_contracts -> ON CONFLICT (restaurant_member_id); bo_user_restaurants -> ON CONFLICT (user_id, restaurant_id) = PRIMARY, the only unique key."
+    },
+    {
+      "site": "avatar upload RowsAffected gate",
+      "note": "Same photo_url re-save -> MySQL 0 changed -> 404 (source quirk) preserved via photo_url COLLATE \"C\" IS DISTINCT FROM."
+    },
+    {
+      "site": "schedule_notifications",
+      "note": "COALESCE(bool, 0) is a type error on PG -> CASE 1/0 (scanned into bool)."
+    },
+    {
+      "site": "insert IDs",
+      "note": "restaurant_members create and bo_users create via sqldb.InsertID inside the tx."
+    },
+    {
+      "site": "ignored-error statements in onboarding tx",
+      "note": "ua cut at 250 bytes may be invalid UTF-8: strict error on both engines (not IGNORE)."
+    }
+  ],
+  "pg_ready": false,
+  "runtime_verified": false,
+  "sites": 84,
+  "native": 84,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "done_files": 7,
+  "syntax_complete": true
+}

@@ -42,7 +42,7 @@ func (s *Server) loadRiceTypesForMenu(ctx context.Context, restaurantID int, men
 // section_kind is 'arroces'. The section is found by its kind, not by a
 // hardcoded id, so a new menu gets its rices without touching this code.
 func (s *Server) loadRiceTypesFromSection(ctx context.Context, restaurantID, menuID int) ([]string, []string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT d.id, d.title_snapshot
 		FROM group_menu_section_dishes_v2 d
 		JOIN group_menu_sections_v2 s ON s.id = d.section_id
@@ -50,7 +50,7 @@ func (s *Server) loadRiceTypesFromSection(ctx context.Context, restaurantID, men
 		  AND s.menu_id = ? AND s.section_kind = 'arroces'
 		  AND (d.active = 1 OR d.active IS NULL)
 		ORDER BY d.title_snapshot ASC
-	`, restaurantID, restaurantID, menuID)
+	`), restaurantID, restaurantID, menuID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,17 +159,23 @@ func (s *Server) handleUpdateDailyLimit(w http.ResponseWriter, r *http.Request) 
 
 	// `reservation_manager` can have multiple rows per date in legacy dumps (no unique key).
 	// Enforce 1 row per (restaurant_id, date) by replace-style behavior.
-	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ?", restaurantID, date); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "Error updating daily limit: " + err.Error(),
-		})
-		return
-	}
-	_, err = s.db.ExecContext(r.Context(), `
+	// booking_day_lock_v1: DELETE+INSERT now atomic under the day lock.
+	err = withTx(r.Context(), s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if err := lockBookingDays(ctx, tx, restaurantID, date); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, nativeSQL("DELETE FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ?", `DELETE FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ?`), restaurantID, date); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO reservation_manager (restaurant_id, reservationDate, dailyLimit)
 		VALUES (?, ?, ?)
-	`, restaurantID, date, dailyLimit)
+	`, `
+		INSERT INTO reservation_manager (restaurant_id, "reservationDate", "dailyLimit")
+		VALUES (?, ?, ?)
+	`), restaurantID, date, dailyLimit)
+		return err
+	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -222,11 +228,15 @@ func (s *Server) handleFetchDailyLimit(w http.ResponseWriter, r *http.Request) {
 	// Single roundtrip (legacy uses subqueries).
 	var dailyLimit int
 	var totalPeople int
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT
 			COALESCE((SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1), 45) AS daily_limit,
 			COALESCE((SELECT SUM(party_size) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?), 0) AS total_people
-	`, restaurantID, date, restaurantID, date).Scan(&dailyLimit, &totalPeople)
+	`, `
+		SELECT
+			COALESCE((SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1), 45) AS daily_limit,
+			COALESCE((SELECT SUM(party_size) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?), 0) AS total_people
+	`), restaurantID, date, restaurantID, date).Scan(&dailyLimit, &totalPeople)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -287,11 +297,15 @@ func (s *Server) handleSetMesasDeDosLimit(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO mesas_de_dos (restaurant_id, reservationDate, dailyLimit)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE dailyLimit = VALUES(dailyLimit)
-	`, restaurantID, date, dailyLimit)
+	`, `
+		INSERT INTO mesas_de_dos (restaurant_id, "reservationDate", "dailyLimit")
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET "dailyLimit" = EXCLUDED."dailyLimit"
+	`), restaurantID, date, dailyLimit)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -337,7 +351,7 @@ func (s *Server) handleGetMesasDeDosLimit(w http.ResponseWriter, r *http.Request
 	}
 
 	var dailyLimit sql.NullString
-	err := s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM mesas_de_dos WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&dailyLimit)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT dailyLimit FROM mesas_de_dos WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "dailyLimit" FROM mesas_de_dos WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, date).Scan(&dailyLimit)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -399,7 +413,7 @@ func (s *Server) handleFetchMesasDeDos(w http.ResponseWriter, r *http.Request) {
 
 	limit := 5
 	var limitRaw sql.NullString
-	if err := s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM mesas_de_dos WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&limitRaw); err == nil && limitRaw.Valid {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT dailyLimit FROM mesas_de_dos WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "dailyLimit" FROM mesas_de_dos WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, date).Scan(&limitRaw); err == nil && limitRaw.Valid {
 		v := strings.TrimSpace(limitRaw.String)
 		if v == "sin_limite" {
 			limit = 999
@@ -409,7 +423,7 @@ func (s *Server) handleFetchMesasDeDos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bookedCount int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) as count FROM bookings WHERE restaurant_id = ? AND reservation_date = ? AND party_size = 2", restaurantID, date).Scan(&bookedCount); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COUNT(*) as count FROM bookings WHERE restaurant_id = ? AND reservation_date = ? AND party_size = 2"), restaurantID, date).Scan(&bookedCount); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Database error: " + err.Error(),
@@ -480,7 +494,7 @@ func (s *Server) handleCheckDayStatus(w http.ResponseWriter, r *http.Request) {
 	isOpen := !isDefaultClosed
 
 	var isOpenDB sql.NullInt64
-	if err := s.db.QueryRowContext(r.Context(), "SELECT is_open FROM restaurant_days WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, date).Scan(&isOpenDB); err == nil && isOpenDB.Valid {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT is_open FROM restaurant_days WHERE restaurant_id = ? AND date = ? LIMIT 1"), restaurantID, date).Scan(&isOpenDB); err == nil && isOpenDB.Valid {
 		isOpen = isOpenDB.Int64 != 0
 	}
 
@@ -538,11 +552,15 @@ func (s *Server) handleSetDayOpenFlag(w http.ResponseWriter, r *http.Request, is
 	if isOpen {
 		openInt = 1
 	}
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO restaurant_days (restaurant_id, date, is_open)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)
-	`, restaurantID, date, openInt)
+	`, `
+		INSERT INTO restaurant_days (restaurant_id, date, is_open)
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_id, date) DO UPDATE SET is_open = EXCLUDED.is_open
+	`), restaurantID, date, openInt)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -572,7 +590,7 @@ func (s *Server) loadClosedDayOverrides(ctx context.Context, restaurantID int, f
 	}
 	sqlQuery += " ORDER BY date ASC"
 
-	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(sqlQuery), args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -673,7 +691,7 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	lastDayStr := lastDay.Format("2006-01-02")
 
 	dailyLimits := map[string]int{}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT rm.reservationDate, rm.dailyLimit
 		FROM reservation_manager rm
 		INNER JOIN (
@@ -684,7 +702,18 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 		) latest
 			ON latest.reservationDate = rm.reservationDate AND latest.max_id = rm.id
 		WHERE rm.restaurant_id = ?
-	`, restaurantID, firstDayStr, lastDayStr, restaurantID)
+	`, `
+		SELECT rm."reservationDate", rm."dailyLimit"
+		FROM reservation_manager rm
+		INNER JOIN (
+			SELECT "reservationDate", MAX(id) AS max_id
+			FROM reservation_manager
+			WHERE restaurant_id = ? AND "reservationDate" BETWEEN ? AND ?
+			GROUP BY "reservationDate"
+		) latest
+			ON latest."reservationDate" = rm."reservationDate" AND latest.max_id = rm.id
+		WHERE rm.restaurant_id = ?
+	`), restaurantID, firstDayStr, lastDayStr, restaurantID)
 
 	if err != nil {
 		return nil, err
@@ -704,12 +733,12 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	}
 
 	bookings := map[string]int{}
-	rows2, err := s.db.QueryContext(ctx, `
+	rows2, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT reservation_date, COALESCE(SUM(party_size), 0) as total_people
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date BETWEEN ? AND ?
 		GROUP BY reservation_date
-	`, restaurantID, firstDayStr, lastDayStr)
+	`), restaurantID, firstDayStr, lastDayStr)
 	if err != nil {
 		return nil, err
 	}
@@ -727,11 +756,15 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	}
 
 	closedOverrides := map[string]bool{}
-	overrideRows, err := s.db.QueryContext(ctx, `
+	overrideRows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT date
 		FROM restaurant_days
 		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_open = FALSE
-	`, restaurantID, firstDayStr, lastDayStr)
+	`, `
+		SELECT date
+		FROM restaurant_days
+		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_open = 0
+	`), restaurantID, firstDayStr, lastDayStr)
 	if err != nil {
 		return nil, err
 	}
@@ -751,16 +784,21 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	// special_dates_v1 — only the fields the calendar needs to render the
 	// marker (active state + prereserva flag + title) are pulled.
 	type specialMonthRow struct {
-		isActive   int
-		prereserva int
-		title      string
+		isActive     int
+		prereserva   int
+		whatsAppOnly int
+		title        string
 	}
 	specialByDate := map[string]specialMonthRow{}
-	specialRows, err := s.db.QueryContext(ctx, `
-		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, title
+	specialRows, err := s.db.QueryContext(ctx, nativeSQL(`
+		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, whatsapp_only, title
 		FROM special_dates
 		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_active = 1
-	`, restaurantID, firstDayStr, lastDayStr)
+	`, `
+		SELECT to_char(date, 'YYYY-MM-DD'), is_active, prereserva_enabled, whatsapp_only, title
+		FROM special_dates
+		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_active = 1
+	`), restaurantID, firstDayStr, lastDayStr)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +806,7 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	for specialRows.Next() {
 		var d string
 		var r specialMonthRow
-		if err := specialRows.Scan(&d, &r.isActive, &r.prereserva, &r.title); err != nil {
+		if err := specialRows.Scan(&d, &r.isActive, &r.prereserva, &r.whatsAppOnly, &r.title); err != nil {
 			return nil, err
 		}
 		specialByDate[d] = r
@@ -809,7 +847,9 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 			availability[dateISO]["special"] = map[string]any{
 				"is_active":          sr.isActive != 0,
 				"prereserva_enabled": sr.prereserva != 0,
-				"title":              sr.title,
+				// Coordination id: special_date_whatsapp_only_v1
+				"whatsapp_only": sr.whatsAppOnly != 0,
+				"title":         sr.title,
 			}
 		} else {
 			availability[dateISO]["special"] = nil
@@ -877,14 +917,14 @@ func (s *Server) handleFetchOccupancy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var dailyLimit int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE((SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1), 45) AS daily_limit", restaurantID, date).Scan(&dailyLimit); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT COALESCE((SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1), 45) AS daily_limit", `SELECT COALESCE((SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1), 45) AS daily_limit`), restaurantID, date).Scan(&dailyLimit); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"error": err.Error(),
 		})
 		return
 	}
 	var totalPeople int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?", restaurantID, date).Scan(&totalPeople); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?"), restaurantID, date).Scan(&totalPeople); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"error": err.Error(),
 		})
@@ -960,15 +1000,32 @@ func ensureHHMMSS(t string) (string, error) {
 		return "", badRequest("empty time")
 	}
 	if len(t) == 5 {
-		return t + ":00", nil
+		t += ":00"
+	} else if len(t) > 8 {
+		t = t[:8]
 	}
-	if len(t) == 8 {
-		return t, nil
+	// types_time_clock_v1: bookings.reservation_time is a clock time of day
+	// (every source row is 00..23h: full-export scan). MySQL TIME would also
+	// store a duration like "25:00:00" or "-01:00:00" that PG time(0)
+	// rejects; both dialects now refuse anything but HH:MM:SS 00-23/00-59.
+	if len(t) != 8 || !validClockHHMMSS(t) {
+		return "", badRequest("invalid time")
 	}
-	if len(t) > 8 {
-		return t[:8], nil
+	return t, nil
+}
+
+// validClockHHMMSS reports a strict "HH:MM:SS" clock time (00-23, 00-59, 00-59).
+func validClockHHMMSS(t string) bool {
+	if len(t) != 8 || t[2] != ':' || t[5] != ':' {
+		return false
 	}
-	return "", badRequest("invalid time")
+	num := func(a, b byte, max int) bool {
+		if a < '0' || a > '9' || b < '0' || b > '9' {
+			return false
+		}
+		return int(a-'0')*10+int(b-'0') <= max
+	}
+	return num(t[0], t[1], 23) && num(t[3], t[4], 59) && num(t[6], t[7], 59)
 }
 
 func decodePossibleJSONValue(raw any) any {

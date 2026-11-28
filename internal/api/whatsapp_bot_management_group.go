@@ -269,8 +269,40 @@ var botManagementPrefix = map[string][2]string{
 	"allergens":            {"Soy un asistente de reservas con Inteligencia Artificial y no dispongo de información fiable sobre ingredientes ni alérgenos; por seguridad alimentaria debe confirmarlo el restaurante.", "I'm an AI booking assistant and I don't have reliable ingredient or allergen information; for food safety the restaurant must confirm it."},
 	"event_booking":        {"Como se trata de una reserva especial, los detalles se acuerdan directamente con la gestión del restaurante.", "As this is a special booking, the details are agreed directly with the restaurant management."},
 	"special_date_booking": {"Tu reserva es para una fecha especial y, como asistente con Inteligencia Artificial, no puedo modificarla ni cancelarla.", "Your booking is for a special date and, as an AI assistant, I can't change or cancel it."},
-	"human_anger":          {"Siento mucho que no te haya podido ayudar como esperabas 🙏.", "I'm really sorry I couldn't help you as you expected 🙏."},
-	"human_cannot":         {"Esta consulta no la puedo resolver con seguridad y prefiero no darte una respuesta equivocada.", "I can't answer this safely and I'd rather not give you a wrong answer."},
+	// Coordination id: special_date_whatsapp_only_v1
+	"special_date_whatsapp_only": {"Las reservas de esta fecha especial las gestiona directamente el equipo del restaurante por WhatsApp.", "Bookings for this special date are handled directly by the restaurant team over WhatsApp."},
+	"human_anger":                {"Siento mucho que no te haya podido ayudar como esperabas 🙏.", "I'm really sorry I couldn't help you as you expected 🙏."},
+	"human_cannot":               {"Esta consulta no la puedo resolver con seguridad y prefiero no darte una respuesta equivocada.", "I can't answer this safely and I'd rather not give you a wrong answer."},
+	// wa_bot_hard_policy_v1
+	botReasonHorizon: {"Solo puedo gestionar reservas con un máximo de 35 días de antelación; para fechas posteriores tienes que hablar directamente con la gestión del restaurante.", "I can only handle bookings up to 35 days ahead; for later dates please contact the restaurant management directly."},
+	botReasonEvent:   {"Los eventos y celebraciones (comuniones, bodas, bautizos, cumpleaños…), sus menús y presupuestos se gestionan directamente con la gestión del restaurante.", "Events and celebrations (communions, weddings, baptisms, birthdays…), their menus and quotes are handled directly by the restaurant management."},
+}
+
+// botPolicyReasons are the hard policies of wa_bot_hard_policy_v1: their card
+// is ONLY the configured management phone (branding.ManagementPhone); with no
+// management phone the customer gets the referral text and no card, never the
+// card of another contact.
+var botPolicyReasons = map[string]bool{botReasonHorizon: true, botReasonEvent: true}
+
+// botSendReasonCard sends the contact card a reason requires (same-day chain
+// for same_day, management phone only for the hard policies). Reports
+// whether a card was sent.
+func (s *Server) botSendReasonCard(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, reason string) bool {
+	switch {
+	case reason == "same_day":
+		s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
+		return true
+	case botPolicyReasons[reason]:
+		phone := s.botManagementPhone(ctx, restaurantID)
+		if phone == "" {
+			botCheckpoint("wa_bot_hard_policy_v1", "restaurant_id=%d sender=%s reason=%s card=none no_management_phone", restaurantID, msg.Sender, reason)
+			return false
+		}
+		_, err := s.botSendContactCardWith(ctx, restaurantID, msg, "Gestión "+s.botBrandName(ctx, restaurantID), phone)
+		botCheckpoint("wa_bot_hard_policy_v1", "restaurant_id=%d sender=%s reason=%s card=management_phone sent=%t", restaurantID, msg.Sender, reason, err == nil)
+		return err == nil
+	}
+	return false
 }
 
 func botManagementPrefixFor(reason, lang string) string {
@@ -300,9 +332,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	if duplicate {
 		text := s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, "", lang, true)
 		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_already_forwarded")
-		if reason == "same_day" {
-			s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
-		}
+		s.botSendReasonCard(ctx, restaurantID, msg, tenant, reason)
 		botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d sender=%s reason=%s duplicate=true", restaurantID, msg.Sender, reason)
 		return true
 	}
@@ -330,6 +360,13 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	}
 	_ = s.botConversation.AddManagementRequest(ctx, restaurantID, msg.Sender, reason, summary, groupSent)
 	text := ""
+	if !groupSent && botPolicyReasons[reason] {
+		// Policy referral without the group: the reason text and, only if
+		// configured, the management card (wa_bot_hard_policy_v1).
+		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, prefix, "management_handoff_notice")
+		s.botSendReasonCard(ctx, restaurantID, msg, tenant, reason)
+		return false
+	}
 	if !groupSent {
 		// Never leave the customer without a human path.
 		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, botContactIntroText(""), "management_handoff_notice")
@@ -340,9 +377,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	}
 	text = s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, prefix, lang, false)
 	_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_forwarded")
-	if reason == "same_day" {
-		s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
-	}
+	s.botSendReasonCard(ctx, restaurantID, msg, tenant, reason)
 	botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d sender=%s reason=%s forwarded=true", restaurantID, msg.Sender, reason)
 	return true
 }

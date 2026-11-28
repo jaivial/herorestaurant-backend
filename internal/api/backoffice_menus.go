@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boMenuDish struct {
@@ -43,10 +44,21 @@ func (s *Server) handleBOMenuTableGet(w http.ResponseWriter, r *http.Request, ta
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"menu":    map[string]any{"table": table, "price": nil, "dishes": []boMenuDish{}},
+		})
+		return
+	}
 
 	restaurantID := a.ActiveRestaurantID
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	// SOURCE ANOMALY (preserved): table is the fixed "DIA"/"FINDE" literal of the route
+	// wrappers; neither table exists in the exported/live schema, so these statements
+	// fail on MySQL and PG alike. PG quotes the uppercase identifiers as written; no
+	// substitute table, and no changed-rows predicate (column types cannot be grounded).
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment(`
 		SELECT NUM, DESCRIPCION, TIPO, alergenos, active
 		FROM `+table+`
 		WHERE restaurant_id = ?
@@ -54,7 +66,15 @@ func (s *Server) handleBOMenuTableGet(w http.ResponseWriter, r *http.Request, ta
 		  CASE WHEN TIPO = 'PRECIO' THEN 0 ELSE 1 END,
 		  TIPO ASC,
 		  NUM ASC
-	`, restaurantID)
+	`, `
+		SELECT "NUM", "DESCRIPCION", "TIPO", alergenos, active
+		FROM "`+table+`"
+		WHERE restaurant_id = ?
+		ORDER BY
+		  CASE WHEN "TIPO" = 'PRECIO' THEN 0 ELSE 1 END,
+		  "TIPO" ASC,
+		  "NUM" ASC
+	`)), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando "+table)
 		return
@@ -123,6 +143,10 @@ func (s *Server) handleBOMenuDishCreate(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	var req boMenuDishCreateRequest
 	if err := readJSONBody(r, &req); err != nil {
@@ -162,15 +186,17 @@ func (s *Server) handleBOMenuDishCreate(w http.ResponseWriter, r *http.Request, 
 	alergJSON, _ := json.Marshal(req.Alergenos)
 
 	restaurantID := a.ActiveRestaurantID
-	res, err := s.db.ExecContext(r.Context(), `
+	newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(sqlFragment(`
 		INSERT INTO `+table+` (restaurant_id, DESCRIPCION, TIPO, alergenos, active)
 		VALUES (?, ?, ?, ?, ?)
-	`, restaurantID, desc, tipo, string(alergJSON), activeInt)
+	`, `
+		INSERT INTO "`+table+`" (restaurant_id, "DESCRIPCION", "TIPO", alergenos, active)
+		VALUES (?, ?, ?, ?, ?)
+	`)), `"NUM"`, restaurantID, desc, tipo, string(alergJSON), activeInt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error insertando en "+table)
 		return
 	}
-	newID, _ := res.LastInsertId()
 
 	if tipo != "PRECIO" {
 		s.translateEntityFields(r.Context(), restaurantID, table, newID, []translationField{
@@ -211,6 +237,10 @@ func (s *Server) handleBOMenuDishPatch(w http.ResponseWriter, r *http.Request, t
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
 	id, err := strconv.Atoi(idStr)
@@ -244,7 +274,7 @@ func (s *Server) handleBOMenuDishPatch(w http.ResponseWriter, r *http.Request, t
 			})
 			return
 		}
-		sets = append(sets, "TIPO = ?")
+		sets = append(sets, sqlFragment("TIPO = ?", `"TIPO" = ?`))
 		args = append(args, t)
 	}
 	if req.Descripcion != nil {
@@ -256,7 +286,7 @@ func (s *Server) handleBOMenuDishPatch(w http.ResponseWriter, r *http.Request, t
 			})
 			return
 		}
-		sets = append(sets, "DESCRIPCION = ?")
+		sets = append(sets, sqlFragment("DESCRIPCION = ?", `"DESCRIPCION" = ?`))
 		args = append(args, d)
 	}
 	if req.Alergenos != nil {
@@ -283,8 +313,8 @@ func (s *Server) handleBOMenuDishPatch(w http.ResponseWriter, r *http.Request, t
 	restaurantID := a.ActiveRestaurantID
 	args = append(args, id, restaurantID)
 
-	q := "UPDATE " + table + " SET " + strings.Join(sets, ", ") + " WHERE NUM = ? AND restaurant_id = ?"
-	res, err := s.db.ExecContext(r.Context(), q, args...)
+	q := "UPDATE " + sqlFragment(table, `"`+table+`"`) + " SET " + strings.Join(sets, ", ") + sqlFragment(" WHERE NUM = ? AND restaurant_id = ?", ` WHERE "NUM" = ? AND restaurant_id = ?`)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(q), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando "+table)
 		return
@@ -325,6 +355,10 @@ func (s *Server) handleBOMenuDishDelete(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
 	id, err := strconv.Atoi(idStr)
@@ -337,7 +371,7 @@ func (s *Server) handleBOMenuDishDelete(w http.ResponseWriter, r *http.Request, 
 	}
 
 	restaurantID := a.ActiveRestaurantID
-	res, err := s.db.ExecContext(r.Context(), "DELETE FROM "+table+" WHERE NUM = ? AND restaurant_id = ?", id, restaurantID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL("DELETE FROM "+sqlFragment(table, `"`+table+`"`)+sqlFragment(" WHERE NUM = ? AND restaurant_id = ?", ` WHERE "NUM" = ? AND restaurant_id = ?`)), id, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando "+table)
 		return
@@ -376,6 +410,10 @@ func (s *Server) handleBOMenuSetPrice(w http.ResponseWriter, r *http.Request, ta
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	var req boMenuPriceSetRequest
 	if err := readJSONBody(r, &req); err != nil {
@@ -396,11 +434,18 @@ func (s *Server) handleBOMenuSetPrice(w http.ResponseWriter, r *http.Request, ta
 
 	restaurantID := a.ActiveRestaurantID
 
-	res, err := s.db.ExecContext(r.Context(), `
+	// RowsAffected==0 -> insert relies on MySQL changed rows (an unchanged price would
+	// insert a second PRECIO row); unreachable while DIA/FINDE are absent, so no PG
+	// predicate is invented here (anomaly ledger).
+	res, err := s.db.ExecContext(r.Context(), portableSQL(sqlFragment(`
 		UPDATE `+table+`
 		SET DESCRIPCION = ?, active = 1
 		WHERE restaurant_id = ? AND TIPO = 'PRECIO'
-	`, price, restaurantID)
+	`, `
+		UPDATE "`+table+`"
+		SET "DESCRIPCION" = ?, active = 1
+		WHERE restaurant_id = ? AND "TIPO" = 'PRECIO'
+	`)), price, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando precio en "+table)
 		return
@@ -408,10 +453,13 @@ func (s *Server) handleBOMenuSetPrice(w http.ResponseWriter, r *http.Request, ta
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
 		// Create if missing.
-		_, err := s.db.ExecContext(r.Context(), `
+		_, err := s.db.ExecContext(r.Context(), portableSQL(sqlFragment(`
 			INSERT INTO `+table+` (restaurant_id, DESCRIPCION, TIPO, alergenos, active)
 			VALUES (?, ?, 'PRECIO', '[]', 1)
-		`, restaurantID, price)
+		`, `
+			INSERT INTO "`+table+`" (restaurant_id, "DESCRIPCION", "TIPO", alergenos, active)
+			VALUES (?, ?, 'PRECIO', '[]', 1)
+		`)), restaurantID, price)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error insertando precio en "+table)
 			return

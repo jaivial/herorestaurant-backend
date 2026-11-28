@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func (s *Server) handleBOGroupMenusList(w http.ResponseWriter, r *http.Request) {
@@ -31,12 +32,13 @@ func (s *Server) handleBOGroupMenusList(w http.ResponseWriter, r *http.Request) 
 		where += " AND active = 0"
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	// Composed: fixed text + fixed active filter; MySQL sorts NULL created_at last in DESC.
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, menu_title, price, included_coffee, active, min_party_size, created_at, modified_at
 		FROM menus
 	`+where+`
-		ORDER BY active DESC, created_at DESC, id DESC
-	`, args...)
+		ORDER BY active DESC, created_at DESC`+sqlFragment("", " NULLS LAST")+`, id DESC
+	`), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
 		return
@@ -114,7 +116,7 @@ func (s *Server) boGroupMenuDerivedArrozNames(ctx context.Context, restaurantID 
 	// 1) Dishes that live in an "arroces" section of this menu. A menu that does
 	// not exist yet (create) has no sections, so skip the query entirely.
 	if menuID > 0 {
-		if rows, err := s.db.QueryContext(ctx, `
+		if rows, err := s.db.QueryContext(ctx, portableSQL(`
 			SELECT d.title_snapshot
 			FROM group_menu_sections_v2 sec
 			JOIN group_menu_section_dishes_v2 d
@@ -122,7 +124,7 @@ func (s *Server) boGroupMenuDerivedArrozNames(ctx context.Context, restaurantID 
 			WHERE sec.restaurant_id = ? AND sec.menu_id = ? AND d.active = 1
 			  AND sec.section_kind IN ('arroces', 'rice')
 			ORDER BY d.position ASC, d.id ASC
-		`, restaurantID, menuID); err == nil {
+		`), restaurantID, menuID); err == nil {
 			for rows.Next() {
 				var name string
 				if scanErr := rows.Scan(&name); scanErr != nil {
@@ -135,14 +137,21 @@ func (s *Server) boGroupMenuDerivedArrozNames(ctx context.Context, restaurantID 
 	}
 
 	// 2) Catalog dishes whose type or category is "arroz".
-	if rows, err := s.db.QueryContext(ctx, `
+	if rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT nombre
 		FROM comida_items
 		WHERE restaurant_id = ? AND active = 1
 		  AND (UPPER(TRIM(COALESCE(tipo, ''))) = 'ARROZ'
 		       OR LOWER(TRIM(COALESCE(categoria, ''))) LIKE 'arroz%')
 		ORDER BY nombre ASC
-	`, restaurantID); err == nil {
+	`, `
+		SELECT nombre
+		FROM comida_items
+		WHERE restaurant_id = ? AND active = 1
+		  AND (UPPER(TRIM(COALESCE(tipo, ''))) = 'ARROZ'
+		       OR LOWER(TRIM(COALESCE(categoria, ''))) COLLATE "C" LIKE 'arroz%')
+		ORDER BY nombre COLLATE "es-x-icu" ASC
+	`), restaurantID); err == nil {
 		for rows.Next() {
 			var name string
 			if scanErr := rows.Scan(&name); scanErr != nil {
@@ -282,7 +291,7 @@ func (s *Server) handleBOGroupMenuGet(w http.ResponseWriter, r *http.Request) {
 		modifiedAt   sql.NullString
 	)
 
-	err = s.db.QueryRowContext(r.Context(), query, id, a.ActiveRestaurantID).Scan(
+	err = s.db.QueryRowContext(r.Context(), portableSQL(query), id, a.ActiveRestaurantID).Scan(
 		&id,
 		&menuTitle,
 		&price,
@@ -392,11 +401,11 @@ func (s *Server) handleBOGroupMenuCreate(w http.ResponseWriter, r *http.Request)
 	beverageJSON := mustJSON(input["beverage"], map[string]any{})
 	commentsJSON := mustJSON(input["comments"], []any{})
 
-	res, err := s.db.ExecContext(
-		r.Context(),
-		`INSERT INTO menus
+	menuID, err := sqldb.InsertID(
+		r.Context(), sqlDialect, s.db,
+		portableSQL(`INSERT INTO menus
 		 (restaurant_id, menu_title, price, included_coffee, active, menu_subtitle, entrantes, principales, postre, beverage, comments, min_party_size, main_dishes_limit, main_dishes_limit_number)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`), "id",
 		a.ActiveRestaurantID,
 		menuTitle,
 		price,
@@ -417,7 +426,6 @@ func (s *Server) handleBOGroupMenuCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	menuID, _ := res.LastInsertId()
 	entrantesList := anySliceToStringList(decodeJSONOrFallback(entrantesJSON, []any{}))
 	principalesTitle := decodePrincipalesTitleJSON(principalesJSON)
 	principalesItemsList := decodePrincipalesItemsJSON(principalesJSON)
@@ -476,7 +484,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 
 	// Ensure menu belongs to restaurant.
 	var tmp int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1", id, a.ActiveRestaurantID).Scan(&tmp); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT id FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1"), id, a.ActiveRestaurantID).Scan(&tmp); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -510,7 +518,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 
 	_, err = s.db.ExecContext(
 		r.Context(),
-		`UPDATE menus SET
+		portableSQL(`UPDATE menus SET
 			menu_title = ?,
 			price = ?,
 			included_coffee = ?,
@@ -524,7 +532,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 			min_party_size = ?,
 			main_dishes_limit = ?,
 			main_dishes_limit_number = ?
-		WHERE id = ? AND restaurant_id = ?`,
+		WHERE id = ? AND restaurant_id = ?`),
 		menuTitle,
 		price,
 		includedCoffee,
@@ -578,7 +586,7 @@ func (s *Server) handleBOGroupMenuToggleActive(w http.ResponseWriter, r *http.Re
 	}
 
 	var current int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT active FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1", id, a.ActiveRestaurantID).Scan(&current); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT active FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1"), id, a.ActiveRestaurantID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -595,7 +603,7 @@ func (s *Server) handleBOGroupMenuToggleActive(w http.ResponseWriter, r *http.Re
 		newStatus = 0
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE menus SET active = ? WHERE id = ? AND restaurant_id = ?", newStatus, id, a.ActiveRestaurantID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE menus SET active = ? WHERE id = ? AND restaurant_id = ?"), newStatus, id, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menus")
 		return
 	}
@@ -624,7 +632,7 @@ func (s *Server) handleBOGroupMenuDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), "DELETE FROM menus WHERE id = ? AND restaurant_id = ?", id, a.ActiveRestaurantID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL("DELETE FROM menus WHERE id = ? AND restaurant_id = ?"), id, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando menus")
 		return

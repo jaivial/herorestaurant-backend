@@ -14,6 +14,7 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Backoffice CRUD for per-date "special dates" (reservas especiales).
@@ -67,11 +68,13 @@ type boSpecialDateSaveRequest struct {
 	Description *string `json:"description"`
 	// Coordination id: special_date_custom_notice_v1 - personalised warn
 	// notice shown on step 2 of the public special-date booking wizard.
-	CustomNotice       *string `json:"custom_notice"`
-	PrereservaEnabled  *bool   `json:"prereserva_enabled"`
-	MaxPerTableEnabled *bool   `json:"max_per_table_enabled"`
-	MaxPerTable        *int    `json:"max_per_table"`
-	MobilityEnabled    *bool   `json:"mobility_enabled"`
+	CustomNotice      *string `json:"custom_notice"`
+	PrereservaEnabled *bool   `json:"prereserva_enabled"`
+	// Coordination id: special_date_whatsapp_only_v1 - nil keeps the stored value.
+	WhatsAppOnly       *bool `json:"whatsapp_only"`
+	MaxPerTableEnabled *bool `json:"max_per_table_enabled"`
+	MaxPerTable        *int  `json:"max_per_table"`
+	MobilityEnabled    *bool `json:"mobility_enabled"`
 	// Coordination id: reservation_self_modification_v1 - opt this concrete
 	// special date into the public "modify instead of rebook" self-service.
 	AllowCustomerModification *bool `json:"allow_customer_modification"`
@@ -111,7 +114,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	var id int64
-	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
+	var isActive, prereservaEnabled, whatsAppOnly, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
 	var allowCustomerModification int
 	// Coordination id: guest_count_flags_v1
 	var askAdults, askHighChairs, askBabyStrollers int
@@ -122,8 +125,8 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	var adelantoUnifiedAmount sql.NullFloat64
 	var prereservaStartsOn, prereservaEndsOn sql.NullTime
 
-	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, is_active, title, description, custom_notice, prereserva_enabled,
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
+		SELECT id, is_active, title, description, custom_notice, prereserva_enabled, whatsapp_only,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       allow_customer_modification,
 		       ask_adults, ask_high_chairs, ask_baby_strollers,
@@ -132,8 +135,8 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(
-		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled,
+	`), a.ActiveRestaurantID, date).Scan(
+		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled, &whatsAppOnly,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&allowCustomerModification,
 		&askAdults, &askHighChairs, &askBabyStrollers,
@@ -183,8 +186,10 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 			"title":       title,
 			"description": description.String,
 			// Coordination id: special_date_custom_notice_v1
-			"custom_notice":         customNotice.String,
-			"prereserva_enabled":    prereservaEnabled != 0,
+			"custom_notice":      customNotice.String,
+			"prereserva_enabled": prereservaEnabled != 0,
+			// Coordination id: special_date_whatsapp_only_v1
+			"whatsapp_only":         whatsAppOnly != 0,
 			"max_per_table_enabled": maxPerTableEnabled != 0,
 			"max_per_table":         nullIfZero(maxPerTable.Valid, maxPerTable.Int64),
 			"mobility_enabled":      mobilityEnabled,
@@ -211,12 +216,12 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request, restaurantID int) {
 	ctx := r.Context()
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, date, is_active, title, prereserva_enabled
 		FROM special_dates
 		WHERE restaurant_id = ?
 		ORDER BY date ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando special_dates")
 		return
@@ -264,14 +269,15 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 
 	// Menu labels per special date (custom title wins over catalogue title).
 	labelsByDate := map[int64][]string{}
-	labelRows, err := s.db.QueryContext(ctx, `
+	// Composed: fixed text + one "?" per id; only the CONCAT label differs.
+	labelRows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sdm.special_date_id,
-		       COALESCE(NULLIF(sdm.custom_title, ''), m.menu_title, CONCAT('Menú #', sdm.menu_id))
+		       COALESCE(NULLIF(sdm.custom_title, ''), m.menu_title, `+sqlFragment("CONCAT('Menú #', sdm.menu_id)", "('Menú #' || sdm.menu_id)")+`)
 		FROM special_date_menus sdm
 		LEFT JOIN menus m ON m.id = sdm.menu_id
 		WHERE sdm.restaurant_id = ? AND sdm.special_date_id IN (`+strings.Join(placeholders, ",")+`)
 		ORDER BY sdm.position ASC, sdm.id ASC
-	`, append([]any{restaurantID}, ids...)...)
+	`), append([]any{restaurantID}, ids...)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando special_date_menus")
 		return
@@ -296,12 +302,12 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 		datePlaceholders = append(datePlaceholders, "?")
 	}
 	peopleByDate := map[string]int{}
-	peopleRows, err := s.db.QueryContext(ctx, `
+	peopleRows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT reservation_date, COALESCE(SUM(party_size), 0)
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date IN (`+strings.Join(datePlaceholders, ",")+`)
 		GROUP BY reservation_date
-	`, append([]any{restaurantID}, dates...)...)
+	`), append([]any{restaurantID}, dates...)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando ocupación")
 		return
@@ -320,7 +326,7 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 
 	// Daily limit per date (latest reservation_manager row, default 45 like availability).
 	limitByDate := map[string]int{}
-	limitRows, err := s.db.QueryContext(ctx, `
+	limitRows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT rm.reservationDate, rm.dailyLimit
 		FROM reservation_manager rm
 		INNER JOIN (
@@ -330,7 +336,17 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 			GROUP BY reservationDate
 		) latest ON latest.reservationDate = rm.reservationDate AND latest.max_id = rm.id
 		WHERE rm.restaurant_id = ?
-	`, restaurantID, restaurantID)
+	`, `
+		SELECT rm."reservationDate", rm."dailyLimit"
+		FROM reservation_manager rm
+		INNER JOIN (
+			SELECT "reservationDate", MAX(id) AS max_id
+			FROM reservation_manager
+			WHERE restaurant_id = ?
+			GROUP BY "reservationDate"
+		) latest ON latest."reservationDate" = rm."reservationDate" AND latest.max_id = rm.id
+		WHERE rm.restaurant_id = ?
+	`), restaurantID, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando límites")
 		return
@@ -380,14 +396,14 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 
 // loadBOSpecialDateMenus reads the child rows for one special date.
 func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount, sdm.price, sdm.position,
 		       COALESCE(m.completo, 0)
 		FROM special_date_menus sdm
 		LEFT JOIN menus m ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
 		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?
 		ORDER BY sdm.position ASC, sdm.id ASC
-	`, restaurantID, specialDateID)
+	`), restaurantID, specialDateID)
 	if err != nil {
 		return nil, err
 	}
@@ -623,11 +639,11 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		var ok int
-		err := s.db.QueryRowContext(r.Context(), `
+		err := s.db.QueryRowContext(r.Context(), portableSQL(`
 			SELECT 1 FROM menus
 			WHERE restaurant_id = ? AND id = ? AND active = 1 AND is_draft = 0
 			LIMIT 1
-		`, a.ActiveRestaurantID, *m.MenuID).Scan(&ok)
+		`), a.ActiveRestaurantID, *m.MenuID).Scan(&ok)
 		if err == sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -710,20 +726,27 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	if req.MobilityEnabled != nil {
 		mobilityEnabledReq = *req.MobilityEnabled
 	}
+	// Coordination id: special_date_whatsapp_only_v1 - nil (legacy client) keeps the stored flag.
+	var whatsAppOnlyReq any
+	if req.WhatsAppOnly != nil {
+		whatsAppOnlyReq = boolToInt(*req.WhatsAppOnly)
+		specialDateWhatsAppOnlyCheckpoint("restaurant_id=%d date=%s saved whatsapp_only=%t", a.ActiveRestaurantID, date, *req.WhatsAppOnly)
+	}
 	var maxPerTableVal any
 	maxPerTableVal = nil
 	if maxPerTableEnabled && maxPerTable > 0 {
 		maxPerTableVal = maxPerTable
 	}
 
-	_, err = tx.ExecContext(r.Context(), `
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO special_dates
 			(restaurant_id, date, is_active, title, description, custom_notice, prereserva_enabled,
 			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, allow_customer_modification,
 			 ask_adults, ask_high_chairs, ask_baby_strollers, adelanto_payment_methods,
-			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on, whatsapp_only)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0))
 		ON DUPLICATE KEY UPDATE
+			whatsapp_only = COALESCE(?, whatsapp_only),
 			is_active = VALUES(is_active),
 			title = VALUES(title),
 			description = VALUES(description),
@@ -742,10 +765,38 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			adelanto_unified_amount = VALUES(adelanto_unified_amount),
 			prereserva_starts_on = VALUES(prereserva_starts_on),
 			prereserva_ends_on = VALUES(prereserva_ends_on)
-	`, a.ActiveRestaurantID, date, boolToInt(isActive), title, description, customNotice, boolToInt(prereservaEnabled),
+	`, `
+		INSERT INTO special_dates
+			(restaurant_id, date, is_active, title, description, custom_notice, prereserva_enabled,
+			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, allow_customer_modification,
+			 ask_adults, ask_high_chairs, ask_baby_strollers, adelanto_payment_methods,
+			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on, whatsapp_only)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, COALESCE(?, 0))
+		ON CONFLICT (restaurant_id, date) DO UPDATE SET
+			whatsapp_only = COALESCE(?, special_dates.whatsapp_only),
+			is_active = EXCLUDED.is_active,
+			title = EXCLUDED.title,
+			description = EXCLUDED.description,
+			custom_notice = EXCLUDED.custom_notice,
+			prereserva_enabled = EXCLUDED.prereserva_enabled,
+			max_per_table_enabled = EXCLUDED.max_per_table_enabled,
+			max_per_table = EXCLUDED.max_per_table,
+			mobility_enabled = EXCLUDED.mobility_enabled,
+			requires_adelanto = EXCLUDED.requires_adelanto,
+			allow_customer_modification = EXCLUDED.allow_customer_modification,
+			ask_adults = EXCLUDED.ask_adults,
+			ask_high_chairs = EXCLUDED.ask_high_chairs,
+			ask_baby_strollers = EXCLUDED.ask_baby_strollers,
+			adelanto_payment_methods = EXCLUDED.adelanto_payment_methods,
+			adelanto_unified = EXCLUDED.adelanto_unified,
+			adelanto_unified_amount = EXCLUDED.adelanto_unified_amount,
+			prereserva_starts_on = EXCLUDED.prereserva_starts_on,
+			prereserva_ends_on = EXCLUDED.prereserva_ends_on
+	`), a.ActiveRestaurantID, date, boolToInt(isActive), title, description, customNotice, boolToInt(prereservaEnabled),
 		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), boolToInt(allowCustomerModificationReq),
 		boolToInt(askAdultsReq), boolToInt(askHighChairsReq), boolToInt(askBabyStrollersReq), string(adelantoMethodsJSON),
-		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn)
+		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn,
+		whatsAppOnlyReq, whatsAppOnlyReq)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando special_dates")
 		return
@@ -755,27 +806,31 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	// in the request also upserts the per-day override (same transaction) so
 	// the resolved flag matches this choice.
 	if req.MobilityEnabled != nil {
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO mobility_day_override (restaurant_id, reservationDate, mobility_enabled)
 			VALUES (?, ?, ?)
 			ON DUPLICATE KEY UPDATE mobility_enabled = VALUES(mobility_enabled)
-		`, a.ActiveRestaurantID, date, boolToInt(*req.MobilityEnabled)); err != nil {
+		`, `
+			INSERT INTO mobility_day_override (restaurant_id, "reservationDate", mobility_enabled)
+			VALUES (?, ?, ?)
+			ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET mobility_enabled = EXCLUDED.mobility_enabled
+		`), a.ActiveRestaurantID, date, boolToInt(*req.MobilityEnabled)); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error guardando mobility_day_override")
 			return
 		}
 	}
 
 	var specialDateID int64
-	if err := tx.QueryRowContext(r.Context(), `
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id FROM special_dates WHERE restaurant_id = ? AND date = ? LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&specialDateID); err != nil {
+	`), a.ActiveRestaurantID, date).Scan(&specialDateID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo special_date_id")
 		return
 	}
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM special_date_menus WHERE restaurant_id = ? AND special_date_id = ?
-	`, a.ActiveRestaurantID, specialDateID); err != nil {
+	`), a.ActiveRestaurantID, specialDateID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error limpiando special_date_menus")
 		return
 	}
@@ -802,11 +857,11 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		if m.CustomImageURL != nil && strings.TrimSpace(*m.CustomImageURL) != "" {
 			customImage = sql.NullString{String: strings.TrimSpace(*m.CustomImageURL), Valid: true}
 		}
-		res, err := tx.ExecContext(r.Context(), `
+		sdmID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 			INSERT INTO special_date_menus
 				(restaurant_id, special_date_id, menu_id, custom_title, custom_image_url, adelanto_amount, price, position)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, specialDateID, menuID, customTitle, customImage, adelantoAmount, price, m.Position)
+		`), "id", a.ActiveRestaurantID, specialDateID, menuID, customTitle, customImage, adelantoAmount, price, m.Position)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error insertando special_date_menus")
 			return
@@ -815,16 +870,15 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		// lives on the catalogue menu so the public site can flag it everywhere
 		// (menu page, home card, burger nav).
 		if m.MenuID != nil && m.Completo != nil {
-			if _, err := tx.ExecContext(r.Context(), `
+			if _, err := tx.ExecContext(r.Context(), portableSQL(`
 				UPDATE menus SET completo = ? WHERE id = ? AND restaurant_id = ?
-			`, boolToInt(*m.Completo), *m.MenuID, a.ActiveRestaurantID); err != nil {
+			`), boolToInt(*m.Completo), *m.MenuID, a.ActiveRestaurantID); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error guardando completo del menú")
 				return
 			}
 		}
 		// Coordination id: special_date_section_menus_v1
 		if m.MenuID != nil && len(m.Sections) > 0 {
-			sdmID, _ := res.LastInsertId()
 			if err := saveSpecialDateMenuSections(r.Context(), tx, a.ActiveRestaurantID, sdmID, *m.MenuID, m.Sections); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error guardando adelantos por seccion")
 				return

@@ -38,9 +38,11 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/db"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // arrozShaped matches the vocabulary the restaurant actually uses for rice. It
@@ -65,14 +67,20 @@ func main() {
 	flag.Parse()
 
 	cfg := config.Load()
-	database, err := db.OpenMySQL(cfg.MySQL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// db_dialect_selection_v1: MySQL unchanged; PG fails closed until
+	// QA-approved and import-verified; report only on PG until runtime QA.
+	database, d, err := db.OpenBusinessForTool(ctx, cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer database.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	dialect = d
+	if dialect == sqldb.Postgres && *apply {
+		log.Fatal("group-menu-arroz-cleanup: --apply refused on PostgreSQL until runtime QA; run without --apply (report only)")
+	}
 
 	rows, err := loadMenus(ctx, database, *restaurant, *menu)
 	if err != nil {
@@ -191,7 +199,7 @@ func main() {
 	for _, row := range rows {
 		var current sql.NullString
 		if err := database.QueryRowContext(ctx,
-			`SELECT principales FROM menus WHERE id = ? AND restaurant_id = ?`,
+			portableSQL(`SELECT principales FROM menus WHERE id = ? AND restaurant_id = ?`),
 			row.MenuID, row.RestaurantID,
 		).Scan(&current); err != nil {
 			log.Fatalf("menu %d: re-read before write failed: %v", row.MenuID, err)
@@ -232,7 +240,7 @@ func main() {
 			log.Fatal(err)
 		}
 		if _, err := database.ExecContext(ctx,
-			`UPDATE menus SET principales = ? WHERE id = ? AND restaurant_id = ?`,
+			portableSQL(`UPDATE menus SET principales = ? WHERE id = ? AND restaurant_id = ?`),
 			string(updated), row.MenuID, row.RestaurantID,
 		); err != nil {
 			log.Fatalf("menu %d: update: %v", row.MenuID, err)
@@ -277,7 +285,12 @@ func splitItems(items []string, derivedKeys map[string]bool) (kept, removed, sus
 // isMissingTableErr reports whether err is MySQL's "table doesn't exist" (1146).
 func isMissingTableErr(err error) bool {
 	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1146 {
+		return true
+	}
+	// PG: undefined_table only (42P01), not every undefined object.
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
 }
 
 // noteCatalogUnavailable explains, once, why the catalogue contributes no arroz.
@@ -326,7 +339,7 @@ func derivedArrozNames(ctx context.Context, database *sql.DB, restaurantID, menu
 		return rows.Err()
 	}
 
-	sectionRows, err := database.QueryContext(ctx, `
+	sectionRows, err := database.QueryContext(ctx, portableSQL(`
 		SELECT d.title_snapshot
 		FROM group_menu_sections_v2 sec
 		JOIN group_menu_section_dishes_v2 d
@@ -334,7 +347,7 @@ func derivedArrozNames(ctx context.Context, database *sql.DB, restaurantID, menu
 		WHERE sec.restaurant_id = ? AND sec.menu_id = ? AND d.active = 1
 		  AND sec.section_kind IN ('arroces', 'rice')
 		ORDER BY d.position ASC, d.id ASC
-	`, restaurantID, menuID)
+	`), restaurantID, menuID)
 	if err != nil {
 		return nil, err
 	}
@@ -342,13 +355,22 @@ func derivedArrozNames(ctx context.Context, database *sql.DB, restaurantID, menu
 		return nil, err
 	}
 
-	catalogRows, err := database.QueryContext(ctx, `
+	// PG17 rejects LIKE on the nondeterministic old-nondeterministic-collation collation: LOWER then
+	// byte LIKE on "C" (same rewrite as backoffice_group_menus; the source
+	// unicode_ci accent-insensitive LIKE stays the recorded search gap).
+	catalogRows, err := database.QueryContext(ctx, nativeSQL(`
 		SELECT nombre FROM comida_items
 		WHERE restaurant_id = ? AND active = 1
 		  AND (UPPER(TRIM(COALESCE(tipo, ''))) = 'ARROZ'
 		       OR LOWER(TRIM(COALESCE(categoria, ''))) LIKE 'arroz%')
 		ORDER BY nombre ASC
-	`, restaurantID)
+	`, `
+		SELECT nombre FROM comida_items
+		WHERE restaurant_id = ? AND active = 1
+		  AND (UPPER(TRIM(COALESCE(tipo, ''))) = 'ARROZ'
+		       OR LOWER(TRIM(COALESCE(categoria, ''))) COLLATE "C" LIKE 'arroz%')
+		ORDER BY nombre COLLATE "es-x-icu" ASC
+	`), restaurantID)
 	if err != nil {
 		if isMissingTableErr(err) {
 			// Same source the read path skips. Reported once, not per menu.
@@ -380,7 +402,8 @@ func loadMenus(ctx context.Context, database *sql.DB, restaurantID, menuID int) 
 	}
 	query += ` ORDER BY restaurant_id, id`
 
-	rows, err := database.QueryContext(ctx, query, args...)
+	// Fixed text + optional fixed filters; rebound once.
+	rows, err := database.QueryContext(ctx, portableSQL(query), args...)
 	if err != nil {
 		return nil, err
 	}

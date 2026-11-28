@@ -1,0 +1,8 @@
+[
+  {
+    "table": "assistant_messages",
+    "column": "content",
+    "storage": "bytea",
+    "reason": "1 source row holds a NUL byte (full-source-nul-inventory.json); PG text cannot store NUL; not indexed; callers internal/api/assistant_ws.go:247,414,549 need []byte bind/scan in S3"
+  }
+]

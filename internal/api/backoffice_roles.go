@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boRoleCatalogItem struct {
@@ -223,12 +224,12 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roleRows, err := s.db.QueryContext(r.Context(), `
+	roleRows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT slug, label, sort_order, importance, COALESCE(icon_key, ''), is_system
 		FROM bo_roles
 		WHERE is_active = 1
 		ORDER BY importance DESC, sort_order ASC, slug ASC
-	`)
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando roles")
 		return
@@ -276,11 +277,11 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	permRows, err := s.db.QueryContext(r.Context(), `
+	permRows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT role_slug, section_key
 		FROM bo_role_permissions
 		WHERE is_allowed = 1
-	`)
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando permisos")
 		return
@@ -317,7 +318,7 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 		catalog[i].Permissions = fallback
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT
 			u.id,
 			u.email,
@@ -341,7 +342,7 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 			)
 		WHERE ur.user_id IS NOT NULL OR m.id IS NOT NULL OR u.is_superadmin = 1
 		ORDER BY u.name ASC, u.email ASC, u.id ASC
-	`, a.ActiveRestaurantID, a.ActiveRestaurantID)
+	`), a.ActiveRestaurantID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando usuarios")
 		return
@@ -528,25 +529,29 @@ func (s *Server) handleBORoleCreate(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback() }()
 
 	sortOrder := 1000
-	if err := tx.QueryRowContext(r.Context(), "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM bo_roles").Scan(&sortOrder); err != nil {
+	if err := tx.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(MAX(sort_order), 0) + 10 FROM bo_roles")).Scan(&sortOrder); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error calculando orden de rol")
 		return
 	}
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		INSERT INTO bo_roles (slug, label, sort_order, is_active, importance, icon_key, is_system)
 		VALUES (?, ?, ?, 1, ?, ?, 0)
-	`, roleSlug, label, sortOrder, importance, iconKey); err != nil {
+	`), roleSlug, label, sortOrder, importance, iconKey); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando rol")
 		return
 	}
 
 	for _, section := range permissions {
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO bo_role_permissions (role_slug, section_key, is_allowed)
 			VALUES (?, ?, 1)
 			ON DUPLICATE KEY UPDATE is_allowed = VALUES(is_allowed)
-		`, roleSlug, section); err != nil {
+		`, `
+			INSERT INTO bo_role_permissions (role_slug, section_key, is_allowed)
+			VALUES (?, ?, 1)
+			ON CONFLICT (role_slug, section_key) DO UPDATE SET is_allowed = EXCLUDED.is_allowed
+		`), roleSlug, section); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando permisos de rol")
 			return
 		}
@@ -603,7 +608,7 @@ func (s *Server) handleBOMemberEnsureUser(w http.ResponseWriter, r *http.Request
 		lastName     string
 		emailRaw     sql.NullString
 	)
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT
 			bo_user_id,
 			first_name,
@@ -612,7 +617,7 @@ func (s *Server) handleBOMemberEnsureUser(w http.ResponseWriter, r *http.Request
 		FROM restaurant_members
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
 		LIMIT 1
-	`, memberID, a.ActiveRestaurantID).Scan(&memberUserID, &firstName, &lastName, &emailRaw); err != nil {
+	`), memberID, a.ActiveRestaurantID).Scan(&memberUserID, &firstName, &lastName, &emailRaw); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 				"success": false,
@@ -646,12 +651,12 @@ func (s *Server) handleBOMemberEnsureUser(w http.ResponseWriter, r *http.Request
 		userID = int(memberUserID.Int64)
 		var existingName string
 		var existingEmail string
-		err := s.db.QueryRowContext(r.Context(), `
+		err := s.db.QueryRowContext(r.Context(), portableSQL(`
 			SELECT name, email
 			FROM bo_users
 			WHERE id = ?
 			LIMIT 1
-		`, userID).Scan(&existingName, &existingEmail)
+		`), userID).Scan(&existingName, &existingEmail)
 		if err == nil {
 			userName = strings.TrimSpace(existingName)
 			userEmail = strings.TrimSpace(existingEmail)
@@ -670,12 +675,12 @@ func (s *Server) handleBOMemberEnsureUser(w http.ResponseWriter, r *http.Request
 	}
 
 	if userID == 0 {
-		err := s.db.QueryRowContext(r.Context(), `
+		err := s.db.QueryRowContext(r.Context(), portableSQL(`
 			SELECT id, name, email
 			FROM bo_users
 			WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
 			LIMIT 1
-		`, email).Scan(&userID, &userName, &userEmail)
+		`), email).Scan(&userID, &userName, &userEmail)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error consultando usuario")
 			return
@@ -692,25 +697,24 @@ func (s *Server) handleBOMemberEnsureUser(w http.ResponseWriter, r *http.Request
 				return
 			}
 
-			res, insertErr := s.db.ExecContext(r.Context(), `
+			lastID, insertErr := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 				INSERT INTO bo_users (email, name, password_hash, is_superadmin)
 				VALUES (?, ?, ?, 0)
-			`, email, userName, string(hash))
+			`), "id", email, userName, string(hash))
 			if insertErr != nil {
 				// Handle race on unique email by resolving again.
-				retryErr := s.db.QueryRowContext(r.Context(), `
+				retryErr := s.db.QueryRowContext(r.Context(), portableSQL(`
 					SELECT id, name, email
 					FROM bo_users
 					WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
 					LIMIT 1
-				`, email).Scan(&userID, &userName, &userEmail)
+				`), email).Scan(&userID, &userName, &userEmail)
 				if retryErr != nil {
 					httpx.WriteError(w, http.StatusInternalServerError, "Error creando usuario")
 					return
 				}
 			} else {
 				created = true
-				lastID, _ := res.LastInsertId()
 				userID = int(lastID)
 			}
 		}
@@ -721,11 +725,11 @@ func (s *Server) handleBOMemberEnsureUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE restaurant_members
 		SET bo_user_id = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, userID, memberID, a.ActiveRestaurantID); err != nil {
+	`), userID, memberID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "No se pudo vincular el usuario al miembro",
@@ -831,7 +835,7 @@ func (s *Server) handleBOUserRolePatch(w http.ResponseWriter, r *http.Request) {
 		targetRawRole      sql.NullString
 		targetRestaurantID sql.NullInt64
 	)
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT
 			u.is_superadmin,
 			ur.role AS role_slug,
@@ -854,7 +858,7 @@ func (s *Server) handleBOUserRolePatch(w http.ResponseWriter, r *http.Request) {
 			u.id = ?
 			AND (ur.user_id IS NOT NULL OR m.id IS NOT NULL OR u.is_superadmin = 1)
 		LIMIT 1
-	`, a.ActiveRestaurantID, a.ActiveRestaurantID, userID).Scan(&targetIsSuper, &targetRawRole, &targetRestaurantID)
+	`), a.ActiveRestaurantID, a.ActiveRestaurantID, userID).Scan(&targetIsSuper, &targetRawRole, &targetRestaurantID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
@@ -890,12 +894,16 @@ func (s *Server) handleBOUserRolePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			role = VALUES(role)
-	`, userID, a.ActiveRestaurantID, roleSlug)
+	`, `
+		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
+		VALUES (?, ?, ?)
+		ON CONFLICT (user_id, restaurant_id) DO UPDATE SET role = EXCLUDED.role
+	`), userID, a.ActiveRestaurantID, roleSlug)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando rol")
 		return

@@ -125,7 +125,7 @@ func (s *Server) lookupRestaurantIDByDomain(ctx context.Context, host string) (i
 	}
 
 	var restaurantID int
-	err := s.db.QueryRowContext(ctx, "SELECT restaurant_id FROM restaurant_domains WHERE domain = ? LIMIT 1", host).Scan(&restaurantID)
+	err := s.db.QueryRowContext(ctx, nativeSQL("SELECT restaurant_id FROM restaurant_domains WHERE domain = ? LIMIT 1", "SELECT restaurant_id FROM restaurant_domains WHERE app.norm_ascii(domain) = app.norm_ascii(?) LIMIT 1"), host).Scan(&restaurantID)
 	if err == nil {
 		return restaurantID, nil
 	}
@@ -201,7 +201,7 @@ func (s *Server) restaurantFromRequest(r *http.Request) (int, bool, string) {
 func (s *Server) fetchPrimaryDomain(ctx context.Context, restaurantID int) string {
 	var domain string
 	err := s.db.QueryRowContext(ctx,
-		"SELECT domain FROM restaurant_domains WHERE restaurant_id = ? AND is_primary = 1 LIMIT 1",
+		portableSQL("SELECT domain FROM restaurant_domains WHERE restaurant_id = ? AND is_primary = 1 LIMIT 1"),
 		restaurantID,
 	).Scan(&domain)
 	if err != nil {

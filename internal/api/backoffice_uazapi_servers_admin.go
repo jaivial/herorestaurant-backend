@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 
@@ -21,6 +22,13 @@ const boUAZAPIServerMaxCapacity = 10000
 const boUAZAPIServerSelectBase = `
 SELECT id, name, provider, base_url, admin_token, capacity, used_count, priority, is_active, metadata_json
 FROM uazapi_servers`
+
+// boUAZAPIServerSelectBaseSQL: jsonb metadata read as text on PG (no ? inside).
+func boUAZAPIServerSelectBaseSQL() string {
+	return sqlFragment(boUAZAPIServerSelectBase, `
+SELECT id, name, provider, base_url, admin_token, capacity, used_count, priority, is_active, CAST(metadata_json AS text) AS metadata_json
+FROM uazapi_servers`)
+}
 
 type boUAZAPIServerView struct {
 	ID               int64  `json:"id"`
@@ -206,12 +214,18 @@ func (s *Server) handleBOUAZAPIServersCreate(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	result, err := s.db.ExecContext(r.Context(), `
+	// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps MySQL identical.
+	serverID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`
 		INSERT INTO uazapi_servers
 			(name, provider, base_url, admin_token, capacity, priority, is_active, metadata_json, created_at, updated_at)
 		VALUES
 			(?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-	`, name, provider, baseURL, adminToken, capacity, priority, boolToTinyInt(isActive), metadataValue)
+	`, `
+		INSERT INTO uazapi_servers
+			(name, provider, base_url, admin_token, capacity, priority, is_active, metadata_json, created_at, updated_at)
+		VALUES
+			(?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))
+	`), "id", name, provider, baseURL, adminToken, capacity, priority, boolToTinyInt(isActive), metadataValue)
 	if err != nil {
 		if isSQLDuplicateError(err) {
 			writeBOUAZAPIServerError(w, http.StatusConflict, "DUPLICATE_BASE_URL", "baseUrl ya existe")
@@ -221,12 +235,6 @@ func (s *Server) handleBOUAZAPIServersCreate(w http.ResponseWriter, r *http.Requ
 			writeBOUAZAPIServerError(w, http.StatusServiceUnavailable, "UAZAPI_POOL_UNAVAILABLE", "Pool UAZAPI no disponible")
 			return
 		}
-		writeBOUAZAPIServerError(w, http.StatusInternalServerError, "UAZAPI_SERVER_CREATE_FAILED", "No se pudo crear servidor UAZAPI")
-		return
-	}
-
-	serverID, err := result.LastInsertId()
-	if err != nil {
 		writeBOUAZAPIServerError(w, http.StatusInternalServerError, "UAZAPI_SERVER_CREATE_FAILED", "No se pudo crear servidor UAZAPI")
 		return
 	}
@@ -405,7 +413,7 @@ func (s *Server) handleBOUAZAPIServersPatch(w http.ResponseWriter, r *http.Reque
 		if metadataJSON == nil {
 			setParts = append(setParts, "metadata_json = NULL")
 		} else {
-			setParts = append(setParts, "metadata_json = ?")
+			setParts = append(setParts, sqlFragment("metadata_json = ?", "metadata_json = CAST(? AS jsonb)"))
 			args = append(args, metadataJSON)
 		}
 	}
@@ -415,10 +423,10 @@ func (s *Server) handleBOUAZAPIServersPatch(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	query := "UPDATE uazapi_servers SET " + strings.Join(setParts, ", ") + ", updated_at = NOW() WHERE id = ?"
+	query := "UPDATE uazapi_servers SET " + strings.Join(setParts, ", ") + sqlFragment(", updated_at = NOW() WHERE id = ?", ", updated_at = date_trunc('second', statement_timestamp()) WHERE id = ?")
 	args = append(args, id)
 
-	if _, err := s.db.ExecContext(r.Context(), query, args...); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(query), args...); err != nil {
 		if isSQLDuplicateError(err) {
 			writeBOUAZAPIServerError(w, http.StatusConflict, "DUPLICATE_BASE_URL", "baseUrl ya existe")
 			return
@@ -455,7 +463,7 @@ func (s *Server) handleBOUAZAPIServersPatch(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) loadBOUAZAPIServers(ctx context.Context) ([]boUAZAPIServerView, error) {
-	rows, err := s.db.QueryContext(ctx, boUAZAPIServerSelectBase+` ORDER BY is_active DESC, priority ASC, id ASC`)
+	rows, err := s.db.QueryContext(ctx, portableSQL(boUAZAPIServerSelectBaseSQL()+` ORDER BY is_active DESC, priority ASC, id ASC`))
 	if err != nil {
 		return nil, err
 	}
@@ -476,7 +484,7 @@ func (s *Server) loadBOUAZAPIServers(ctx context.Context) ([]boUAZAPIServerView,
 }
 
 func (s *Server) loadBOUAZAPIServerByID(ctx context.Context, id int64) (boUAZAPIServerView, bool, error) {
-	row := s.db.QueryRowContext(ctx, boUAZAPIServerSelectBase+` WHERE id = ? LIMIT 1`, id)
+	row := s.db.QueryRowContext(ctx, portableSQL(boUAZAPIServerSelectBaseSQL()+` WHERE id = ? LIMIT 1`), id)
 	rec, err := scanBOUAZAPIServerRecord(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

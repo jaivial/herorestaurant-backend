@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boVino struct {
@@ -87,9 +88,10 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *activeOnly)
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	// Composed: reviewed per-dialect fragments + vinoV2From + fixed where; rebound once.
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 			SELECT
-				`+vinoV2NumExpr+` AS num,
+				`+vinoV2NumSQL()+` AS num,
 				COALESCE(v.tipo, ''),
 				COALESCE(nombre, ''),
 				COALESCE(precio, 0),
@@ -99,18 +101,18 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 				COALESCE(graduacion, 0),
 				COALESCE(anyo, ''),
 				active,
-				(foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto,
+				`+sqlFragment("(foto_path IS NOT NULL AND LENGTH(foto_path) > 0)", "CASE WHEN foto_path IS NOT NULL AND LENGTH(foto_path) > 0 THEN 1 ELSE 0 END")+` AS has_foto,
 				foto_path,
 				COALESCE(ai_requested_img, 0),
 				COALESCE(ai_generating_img, 0),
 				ai_generated_img,
-				COALESCE(production_type, 'RAW'),
+				`+sqlFragment("COALESCE(production_type, 'RAW')", "COALESCE(CAST(production_type AS text), 'RAW')")+`,
 				stock_recipe_id,
 				stock_item_id
 			`+vinoV2From+`
 	`+where+`
 			ORDER BY v.tipo ASC, v.nombre ASC, num ASC
-		`, args...)
+		`), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando VINOS")
 		return
@@ -290,7 +292,7 @@ func (s *Server) handleBOVinoCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, newID)...)...); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum), append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, newID)...)...); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
 				"num":     newID,
@@ -414,7 +416,7 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 
 			wineTipo := strings.ToUpper(strings.TrimSpace(derefString(req.Tipo)))
 			if wineTipo == "" {
-				if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(a.ActiveRestaurantID, id)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
+				if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1"), vinoV2LegacyNumArgs(a.ActiveRestaurantID, id)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
 					wineTipo = "OTROS"
 				}
 			}
@@ -447,7 +449,17 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 	restaurantID := a.ActiveRestaurantID
 	args = append(args, vinoV2LegacyNumArgs(restaurantID, id)...)
 	q := "UPDATE group_menu_wines_v2 SET " + strings.Join(sets, ", ") + " WHERE " + vinoV2WhereLegacyNum
-	res, err := s.db.ExecContext(r.Context(), q, args...)
+	execArgs := args
+	if sqlDialect == sqldb.Postgres { // changed-rows contract (RowsAffected==0 -> Wine not found)
+		pred, extra, ok := pgChangedRowsPredicate(sets, args[:len(args)-3], winesV2PGTypes)
+		if !ok {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando VINOS")
+			return
+		}
+		q += pred
+		execArgs = append(append([]any{}, args...), extra...)
+	}
+	res, err := s.db.ExecContext(r.Context(), portableSQL(q), execArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando VINOS")
 		return
@@ -571,7 +583,7 @@ func (s *Server) handleBOVinoImageUpload(w http.ResponseWriter, r *http.Request)
 	}
 
 	var wineTipo string
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...).Scan(&wineTipo); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1"), vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...).Scan(&wineTipo); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Wine not found"})
 		return
 	}
@@ -582,7 +594,7 @@ func (s *Server) handleBOVinoImageUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...)...); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum), append([]any{objectPath}, vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...)...); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image path"})
 		return
 	}
@@ -619,9 +631,9 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 		recipeIDRaw   sql.NullInt64
 		stockItemRaw  sql.NullInt64
 	)
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT
-			`+vinoV2NumExpr+` AS num,
+			`+vinoV2NumSQL()+` AS num,
 			COALESCE(v.tipo, ''),
 			COALESCE(v.nombre, ''),
 			COALESCE(v.precio, 0),
@@ -631,18 +643,18 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 			COALESCE(v.graduacion, 0),
 			COALESCE(v.anyo, ''),
 			v.active,
-			(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0) AS has_foto,
+			`+sqlFragment("(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0)", "CASE WHEN v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0 THEN 1 ELSE 0 END")+` AS has_foto,
 			v.foto_path,
 			COALESCE(v.ai_requested_img, 0),
 			COALESCE(v.ai_generating_img, 0),
 			v.ai_generated_img,
-			COALESCE(v.production_type, 'RAW'),
+			`+sqlFragment("COALESCE(v.production_type, 'RAW')", "COALESCE(CAST(v.production_type AS text), 'RAW')")+`,
 			v.stock_recipe_id,
 			v.stock_item_id
 		`+vinoV2From+`
 		WHERE `+vinoV2WhereLegacyNumJoined+`
 		LIMIT 1
-	`, vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...).Scan(
+	`), vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...).Scan(
 		&v.Num, &v.Tipo, &v.Nombre, &v.Precio, &v.Descripcion,
 		&v.Bodega, &v.DenominacionOrigen, &v.Graduacion, &v.Anyo,
 		&activeInt, &hasFotoInt, &fotoPath,

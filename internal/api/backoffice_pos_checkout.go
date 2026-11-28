@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type posCheckoutPayment struct {
@@ -54,19 +55,19 @@ func validPOSPaymentMethod(value string) bool {
 
 func (s *Server) rebuildPOSAffluenceKey(ctx context.Context, tx *sql.Tx, restaurantID int, date, serviceType string) (int, error) {
 	var covers, adjustments int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(covers),0) FROM pos_visits WHERE restaurant_id=? AND service_date=? AND service_type=? AND channel='DINE_IN' AND status='CLOSED'`, restaurantID, date, serviceType).Scan(&covers); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(SUM(covers),0) FROM pos_visits WHERE restaurant_id=? AND service_date=? AND service_type=? AND channel='DINE_IN' AND status='CLOSED'`), restaurantID, date, serviceType).Scan(&covers); err != nil {
 		return 0, err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(delta_covers),0) FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date=? AND service_type=?`, restaurantID, date, serviceType).Scan(&adjustments); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(SUM(delta_covers),0) FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date=? AND service_type=?`), restaurantID, date, serviceType).Scan(&adjustments); err != nil {
 		return 0, err
 	}
 	covers = aggregatePOSCovers(nil, covers+adjustments)
-	_, err := tx.ExecContext(ctx, `INSERT INTO stock_affluence_daily (restaurant_id,service_date,service_type,covers,source) VALUES (?,?,?,?,'POS') ON DUPLICATE KEY UPDATE covers=VALUES(covers),source='POS'`, restaurantID, date, serviceType, covers)
+	_, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO stock_affluence_daily (restaurant_id,service_date,service_type,covers,source) VALUES (?,?,?,?,'POS') ON DUPLICATE KEY UPDATE covers=VALUES(covers),source='POS'`, `INSERT INTO stock_affluence_daily (restaurant_id,service_date,service_type,covers,source) VALUES (?,?,?,?,'POS') ON CONFLICT (restaurant_id,service_date,service_type) DO UPDATE SET covers=EXCLUDED.covers,source='POS'`), restaurantID, date, serviceType, covers)
 	return covers, err
 }
 
 func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaurantID int, ticketID int64, stockMode string) ([]posStockSnapshot, bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT l.id,l.pos_product_id,l.quantity FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE' ORDER BY l.id`, restaurantID, ticketID)
+	rows, err := tx.QueryContext(ctx, portableSQL(`SELECT l.id,l.pos_product_id,l.quantity FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE' ORDER BY l.id`), restaurantID, ticketID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -100,11 +101,15 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 		if alreadyDeducted {
 			// Line already has APPLIED stock records from real-time deduction
 			// Load existing snapshots for the return value but don't create new ones
-			existingRows, existingErr := tx.QueryContext(ctx, `
+			existingRows, existingErr := tx.QueryContext(ctx, nativeSQL(`
 				SELECT id, stock_rule_id, stock_item_id, warehouse_id, quantity_sold, qty_base_planned, status
 				FROM pos_ticket_line_stock
 				WHERE restaurant_id = ? AND ticket_line_id = ? AND status = 'APPLIED'
-			`, restaurantID, line.ID)
+			`, `
+				SELECT id, stock_rule_id, stock_item_id, warehouse_id, quantity_sold, qty_base_planned, CAST(status AS text)
+				FROM pos_ticket_line_stock
+				WHERE restaurant_id = ? AND ticket_line_id = ? AND status = 'APPLIED'
+			`), restaurantID, line.ID)
 			if existingErr != nil {
 				return nil, false, existingErr
 			}
@@ -127,13 +132,13 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 		}
 		if !line.ProductID.Valid {
 			partial = true
-			_, err = tx.ExecContext(ctx, `INSERT INTO pos_stock_exceptions (restaurant_id,ticket_id,ticket_line_id,code,message) VALUES (?,?,?,'UNMAPPED_PRODUCT','Ticket line has no POS product')`, restaurantID, ticketID, line.ID)
+			_, err = tx.ExecContext(ctx, portableSQL(`INSERT INTO pos_stock_exceptions (restaurant_id,ticket_id,ticket_line_id,code,message) VALUES (?,?,?,'UNMAPPED_PRODUCT','Ticket line has no POS product')`), restaurantID, ticketID, line.ID)
 			if err != nil {
 				return nil, false, err
 			}
 			continue
 		}
-		ruleRows, queryErr := tx.QueryContext(ctx, `SELECT r.id,r.stock_item_id,r.warehouse_id,r.qty_base_per_sale,i.is_tracked,i.deduction_source FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=r.restaurant_id AND w.id=r.warehouse_id WHERE r.restaurant_id=? AND r.pos_product_id=? AND r.is_active=1 AND i.is_active=1 AND i.deleted_at IS NULL AND w.is_active=1 AND w.deleted_at IS NULL ORDER BY r.warehouse_id,r.stock_item_id,r.id`, restaurantID, line.ProductID.Int64)
+		ruleRows, queryErr := tx.QueryContext(ctx, nativeSQL(`SELECT r.id,r.stock_item_id,r.warehouse_id,r.qty_base_per_sale,i.is_tracked,i.deduction_source FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=r.restaurant_id AND w.id=r.warehouse_id WHERE r.restaurant_id=? AND r.pos_product_id=? AND r.is_active=1 AND i.is_active=1 AND i.deleted_at IS NULL AND w.is_active=1 AND w.deleted_at IS NULL ORDER BY r.warehouse_id,r.stock_item_id,r.id`, `SELECT r.id,r.stock_item_id,r.warehouse_id,r.qty_base_per_sale,i.is_tracked,CAST(i.deduction_source AS text) FROM pos_product_stock_rules r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=r.restaurant_id AND w.id=r.warehouse_id WHERE r.restaurant_id=? AND r.pos_product_id=? AND r.is_active=1 AND i.is_active=1 AND i.deleted_at IS NULL AND w.is_active=1 AND w.deleted_at IS NULL ORDER BY r.warehouse_id,r.stock_item_id,r.id`), restaurantID, line.ProductID.Int64)
 		if queryErr != nil {
 			return nil, false, queryErr
 		}
@@ -172,7 +177,7 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 		}
 		ruleRows.Close()
 		for _, snapshot := range lineSnapshots {
-			res, insertErr := tx.ExecContext(ctx, `INSERT INTO pos_ticket_line_stock (restaurant_id,ticket_id,ticket_line_id,stock_rule_id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status,error_code,error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, line.ID, snapshot.RuleID, snapshot.ItemID, snapshot.WarehouseID, snapshot.QuantitySold, snapshot.QtyBase, snapshot.Status, func() any {
+			snapID, insertErr := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`INSERT INTO pos_ticket_line_stock (restaurant_id,ticket_id,ticket_line_id,stock_rule_id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status,error_code,error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?)`), "id", restaurantID, ticketID, line.ID, snapshot.RuleID, snapshot.ItemID, snapshot.WarehouseID, snapshot.QuantitySold, snapshot.QtyBase, snapshot.Status, func() any {
 				if snapshot.Status == "ERROR" {
 					return "INVALID_MAPPING"
 				}
@@ -186,9 +191,9 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 			if insertErr != nil {
 				return nil, false, insertErr
 			}
-			snapshot.SnapshotID, _ = res.LastInsertId()
+			snapshot.SnapshotID = snapID
 			if snapshot.Status == "ERROR" {
-				if _, insertErr = tx.ExecContext(ctx, `INSERT INTO pos_stock_exceptions (restaurant_id,ticket_id,ticket_line_id,code,message) VALUES (?,?,?,'INVALID_MAPPING','Production-only item cannot be deducted by POS')`, restaurantID, ticketID, line.ID); insertErr != nil {
+				if _, insertErr = tx.ExecContext(ctx, portableSQL(`INSERT INTO pos_stock_exceptions (restaurant_id,ticket_id,ticket_line_id,code,message) VALUES (?,?,?,'INVALID_MAPPING','Production-only item cannot be deducted by POS')`), restaurantID, ticketID, line.ID); insertErr != nil {
 					return nil, false, insertErr
 				}
 			}
@@ -196,7 +201,7 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 		}
 		if len(lineSnapshots) == 0 {
 			partial = true
-			_, err = tx.ExecContext(ctx, `INSERT INTO pos_stock_exceptions (restaurant_id,ticket_id,ticket_line_id,code,message) VALUES (?,?,?,'UNMAPPED_PRODUCT','POS product has no stock mapping')`, restaurantID, ticketID, line.ID)
+			_, err = tx.ExecContext(ctx, portableSQL(`INSERT INTO pos_stock_exceptions (restaurant_id,ticket_id,ticket_line_id,code,message) VALUES (?,?,?,'UNMAPPED_PRODUCT','POS product has no stock mapping')`), restaurantID, ticketID, line.ID)
 			if err != nil {
 				return nil, false, err
 			}
@@ -218,37 +223,39 @@ func (s *Server) applyPOSTicketStock(ctx context.Context, tx *sql.Tx, restaurant
 		}
 		// Check if this snapshot was already applied (real-time deduction during order)
 		var existingMovementID sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT sale_movement_id FROM pos_ticket_line_stock WHERE restaurant_id=? AND id=?`, restaurantID, snapshot.SnapshotID).Scan(&existingMovementID); err == nil && existingMovementID.Valid {
+		// Lookup error is ignored and the tx continues: savepoint on PG.
+		if err := sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+			return tx.QueryRowContext(ctx, portableSQL(`SELECT sale_movement_id FROM pos_ticket_line_stock WHERE restaurant_id=? AND id=?`), restaurantID, snapshot.SnapshotID).Scan(&existingMovementID)
+		}); err == nil && existingMovementID.Valid {
 			// Stock was already deducted during real-time, skip
 			continue
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, restaurantID, snapshot.ItemID, snapshot.WarehouseID)
+		_, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON CONFLICT (restaurant_id,stock_item_id,warehouse_id) DO NOTHING`), restaurantID, snapshot.ItemID, snapshot.WarehouseID)
 		if err != nil {
 			return err
 		}
 		var current float64
-		if err = tx.QueryRowContext(ctx, `SELECT qty_base FROM stock_levels WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=? FOR UPDATE`, restaurantID, snapshot.ItemID, snapshot.WarehouseID).Scan(&current); err != nil {
+		if err = tx.QueryRowContext(ctx, portableSQL(`SELECT qty_base FROM stock_levels WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=? FOR UPDATE`), restaurantID, snapshot.ItemID, snapshot.WarehouseID).Scan(&current); err != nil {
 			return err
 		}
 		var unitID int64
 		var factor float64
-		if err = tx.QueryRowContext(ctx, `SELECT id,factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND is_default_display=1 LIMIT 1`, restaurantID, snapshot.ItemID).Scan(&unitID, &factor); err != nil {
+		if err = tx.QueryRowContext(ctx, portableSQL(`SELECT id,factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND is_default_display=1 LIMIT 1`), restaurantID, snapshot.ItemID).Scan(&unitID, &factor); err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,note,actor_user_id) VALUES (?,?,?,?,'SALE',?,?,'pos_ticket_line_stock',?,?,?,?)`, restaurantID, snapshot.ItemID, snapshot.WarehouseID, -snapshot.QtyBase, snapshot.QtyBase/factor, unitID, snapshot.SnapshotID, "pos-ticket:"+strconv.FormatInt(ticketID, 10)+":line-stock:"+strconv.FormatInt(snapshot.SnapshotID, 10)+":sale", "POS ticket sale", actorID)
+		movementID, err := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,note,actor_user_id) VALUES (?,?,?,?,'SALE',?,?,'pos_ticket_line_stock',?,?,?,?)`), "id", restaurantID, snapshot.ItemID, snapshot.WarehouseID, -snapshot.QtyBase, snapshot.QtyBase/factor, unitID, snapshot.SnapshotID, "pos-ticket:"+strconv.FormatInt(ticketID, 10)+":line-stock:"+strconv.FormatInt(snapshot.SnapshotID, 10)+":sale", "POS ticket sale", actorID)
 		if err != nil {
 			return err
 		}
-		movementID, _ := res.LastInsertId()
-		if _, err = tx.ExecContext(ctx, `UPDATE stock_levels SET qty_base=qty_base-?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`, snapshot.QtyBase, restaurantID, snapshot.ItemID, snapshot.WarehouseID); err != nil {
+		if _, err = tx.ExecContext(ctx, portableSQL(`UPDATE stock_levels SET qty_base=qty_base-?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`), snapshot.QtyBase, restaurantID, snapshot.ItemID, snapshot.WarehouseID); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE pos_ticket_line_stock SET sale_movement_id=?,applied_at=NOW() WHERE restaurant_id=? AND id=?`, movementID, restaurantID, snapshot.SnapshotID); err != nil {
+		if _, err = tx.ExecContext(ctx, nativeSQL(`UPDATE pos_ticket_line_stock SET sale_movement_id=?,applied_at=NOW() WHERE restaurant_id=? AND id=?`, `UPDATE pos_ticket_line_stock SET sale_movement_id=?,applied_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND id=?`), movementID, restaurantID, snapshot.SnapshotID); err != nil {
 			return err
 		}
 		quantityAfter := current - snapshot.QtyBase
 		if quantityAfter < 0 {
-			if _, err = tx.ExecContext(ctx, `INSERT IGNORE INTO pos_stock_anomalies (restaurant_id,ticket_id,ticket_line_stock_id,stock_item_id,warehouse_id,quantity_after_base) VALUES (?,?,?,?,?,?)`, restaurantID, ticketID, snapshot.SnapshotID, snapshot.ItemID, snapshot.WarehouseID, quantityAfter); err != nil {
+			if _, err = tx.ExecContext(ctx, nativeSQL(`INSERT INTO pos_stock_anomalies (restaurant_id,ticket_id,ticket_line_stock_id,stock_item_id,warehouse_id,quantity_after_base) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE ticket_line_stock_id=ticket_line_stock_id`, `INSERT INTO pos_stock_anomalies (restaurant_id,ticket_id,ticket_line_stock_id,stock_item_id,warehouse_id,quantity_after_base) VALUES (?,?,?,?,?,?) ON CONFLICT (restaurant_id,ticket_line_stock_id) DO NOTHING`), restaurantID, ticketID, snapshot.SnapshotID, snapshot.ItemID, snapshot.WarehouseID, quantityAfter); err != nil {
 				return err
 			}
 		}
@@ -305,11 +312,17 @@ func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantI
 	var visitID int64
 	var total, ticketDiscount int64
 	var version int
-	var checkoutKey sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT status,visit_id,total_gross_cents,ticket_discount_cents,version,checkout_idempotency_key FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, restaurantID, ticketID).Scan(&status, &visitID, &total, &ticketDiscount, &version, &checkoutKey); err != nil {
+	// padding_idem_key_v1: replay identity is decided by the DB key comparison
+	// (MySQL column collation utf8mb4_unicode_ci PAD SPACE; PG the app.norm ux__
+	// expression), not Go ==, which was stricter than the unique key (a
+	// collation-equal replay got 409 instead of the duplicate answer). NULL
+	// stored key -> false. Payload is not compared (unchanged source contract);
+	// a replay never records payments again.
+	var sameKey bool
+	if err := tx.QueryRowContext(ctx, nativeSQL(`SELECT status,visit_id,total_gross_cents,ticket_discount_cents,version,COALESCE(checkout_idempotency_key = ?, 0) FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),visit_id,total_gross_cents,ticket_discount_cents,version,COALESCE(app.norm_ascii(checkout_idempotency_key) = app.norm_ascii(?), false) FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), idempotencyKey, restaurantID, ticketID).Scan(&status, &visitID, &total, &ticketDiscount, &version, &sameKey); err != nil {
 		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusNotFound, msg: "Ticket not found"}
 	}
-	if checkoutKey.Valid && checkoutKey.String == idempotencyKey && status != "OPEN" {
+	if sameKey && status != "OPEN" {
 		return posCheckoutTxResult{Duplicate: true, VisitID: visitID}, nil
 	}
 	if status != "OPEN" {
@@ -346,12 +359,12 @@ func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantI
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Tip cannot be negative"}
 		}
 		tipTotal += payment.TipCents
-		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,tendered_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, payment.TenderedCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, portableSQL(`INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,tendered_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)`), restaurantID, ticketID, mysqlUpperEnumArg(payment.Method), payment.AmountCents, payment.TipCents, payment.TenderedCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Payment could not be recorded"}
 		}
 	}
 	if tipTotal > 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE pos_tickets SET tip_cents=? WHERE restaurant_id=? AND id=?`, tipTotal, restaurantID, ticketID); err != nil {
+		if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE pos_tickets SET tip_cents=? WHERE restaurant_id=? AND id=?`), tipTotal, restaurantID, ticketID); err != nil {
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error recording tip"}
 		}
 	}
@@ -373,22 +386,22 @@ func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantI
 			stockStatus = "SHADOW"
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE pos_tickets SET status='PAID',paid_cents=?,stock_status=?,checkout_idempotency_key=?,shift_id=?,closed_by=?,paid_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, total, stockStatus, idempotencyKey, shiftID, userID, restaurantID, ticketID); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL(`UPDATE pos_tickets SET status='PAID',paid_cents=?,stock_status=?,checkout_idempotency_key=?,shift_id=?,closed_by=?,paid_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, `UPDATE pos_tickets SET status='PAID',paid_cents=?,stock_status=?,checkout_idempotency_key=?,shift_id=?,closed_by=?,paid_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),version=version+1 WHERE restaurant_id=? AND id=?`), []any{total, stockStatus, idempotencyKey, shiftID, userID, restaurantID, ticketID}...); err != nil {
 		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing ticket"}
 	}
 	visitClosed := false
 	var tableID sql.NullInt64
 	if closeVisit || settings.AutoCloseVisit {
 		var openTickets int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND id<>? AND status='OPEN'`, restaurantID, visitID, ticketID).Scan(&openTickets); err != nil {
+		if err := tx.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND id<>? AND status='OPEN'`), restaurantID, visitID, ticketID).Scan(&openTickets); err != nil {
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing visit"}
 		}
 		if openTickets == 0 {
 			var serviceDate, serviceType, channel string
-			if err := tx.QueryRowContext(ctx, `SELECT service_date,service_type,channel,table_id FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, restaurantID, visitID).Scan(&serviceDate, &serviceType, &channel, &tableID); err != nil {
+			if err := tx.QueryRowContext(ctx, nativeSQL(`SELECT service_date,service_type,channel,table_id FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT service_date,CAST(service_type AS text),CAST(channel AS text),table_id FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`), restaurantID, visitID).Scan(&serviceDate, &serviceType, &channel, &tableID); err != nil {
 				return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing visit"}
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, userID, restaurantID, visitID); err != nil {
+			if _, err := tx.ExecContext(ctx, nativeSQL(`UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, `UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`), userID, restaurantID, visitID); err != nil {
 				return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing visit"}
 			}
 			serviceDate = normalizePOSDate(serviceDate)
@@ -401,7 +414,10 @@ func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantI
 			}
 		}
 	}
-	_, _ = tx.ExecContext(ctx, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CHECKOUT',JSON_OBJECT('stockStatus',?,'totalCents',?),?)`, restaurantID, ticketID, stockStatus, total, userID)
+	_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error { // ignored audit continues the caller's tx (bulk loop)
+		_, e := tx.ExecContext(ctx, nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CHECKOUT',JSON_OBJECT('stockStatus',?,'totalCents',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CHECKOUT',jsonb_build_object('stockStatus',CAST(? AS text),'totalCents',CAST(? AS bigint)),?)`), restaurantID, ticketID, stockStatus, total, userID)
+		return e
+	})
 	return posCheckoutTxResult{TotalCents: total, StockStatus: stockStatus, VisitClosed: visitClosed, VisitID: visitID, TableID: tableID}, nil
 }
 
@@ -550,7 +566,7 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open POS shift required", "code": "SHIFT_REQUIRED"})
 		return
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT t.id, t.total_gross_cents FROM pos_tickets t JOIN pos_visits v ON v.id=t.visit_id WHERE v.restaurant_id=? AND v.service_date=? AND v.status='OPEN' AND t.status='OPEN' ORDER BY t.id FOR UPDATE`, a.ActiveRestaurantID, date)
+	rows, err := tx.QueryContext(r.Context(), portableSQL(`SELECT t.id, t.total_gross_cents FROM pos_tickets t JOIN pos_visits v ON v.id=t.visit_id WHERE v.restaurant_id=? AND v.service_date=? AND v.status='OPEN' AND t.status='OPEN' ORDER BY t.id FOR UPDATE`), a.ActiveRestaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading open tickets")
 		return
@@ -608,7 +624,10 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 		totalGross += result.TotalCents
 		byMethod[method] += result.TotalCents
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',0,'BULK_CHECKOUT',JSON_OBJECT('date',?,'paymentMethod',?,'closedTickets',?,'closedVisits',?,'skippedTickets',?,'totalGrossCents',?),?)`, a.ActiveRestaurantID, date, method, closedTickets, closedVisits, skippedTickets, totalGross, a.User.ID)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored audit error continues the tx
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',0,'BULK_CHECKOUT',JSON_OBJECT('date',?,'paymentMethod',?,'closedTickets',?,'closedVisits',?,'skippedTickets',?,'totalGrossCents',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',0,'BULK_CHECKOUT',jsonb_build_object('date',CAST(? AS text),'paymentMethod',CAST(? AS text),'closedTickets',CAST(? AS bigint),'closedVisits',CAST(? AS bigint),'skippedTickets',CAST(? AS bigint),'totalGrossCents',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, date, method, closedTickets, closedVisits, skippedTickets, totalGross, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error committing bulk checkout")
 		return
@@ -676,7 +695,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var paid, refunded int64
 	var status string
-	if err = tx.QueryRowContext(r.Context(), `SELECT paid_cents,refunded_cents,status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&paid, &refunded, &status); err != nil || status == "OPEN" || status == "VOIDED" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT paid_cents,refunded_cents,status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT paid_cents,refunded_cents,CAST(status AS text) FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&paid, &refunded, &status); err != nil || status == "OPEN" || status == "VOIDED" {
 		httpx.WriteError(w, 409, "Ticket cannot be refunded")
 		return
 	}
@@ -684,7 +703,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 409, "Refund exceeds paid amount")
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_refunds (restaurant_id,ticket_id,amount_cents,reason,payment_method,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), strings.ToUpper(in.PaymentMethod), in.IdempotencyKey, a.User.ID)
+	refundID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_refunds (restaurant_id,ticket_id,amount_cents,reason,payment_method,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), mysqlUpperEnumArg(in.PaymentMethod), in.IdempotencyKey, a.User.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			tx.Rollback()
@@ -694,10 +713,12 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 400, "Refund could not be recorded")
 		return
 	}
-	refundID, _ := res.LastInsertId()
 	// A refund had no audit row at all; with a PIN policy it must at least name
 	// who authorised the money going back.
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'REFUND',JSON_OBJECT('refundId',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, refundID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored audit error continues the tx
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'REFUND',JSON_OBJECT('refundId',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'REFUND',jsonb_build_object('refundId',CAST(? AS bigint),'amountCents',CAST(? AS bigint),'reason',CAST(? AS text),'approvedBy',CAST(? AS text)),?)`), a.ActiveRestaurantID, ticketID, refundID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
+		return e
+	})
 	lineAmountTotal := int64(0)
 	for _, line := range in.Lines {
 		lineAmountTotal += line.AmountCents
@@ -713,7 +734,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		}
 		var sold, already float64
 		var lineTotal int64
-		if err = tx.QueryRowContext(r.Context(), `SELECT quantity,line_total_gross_cents,(SELECT COALESCE(SUM(rl.quantity),0) FROM pos_refund_lines rl JOIN pos_refunds rr ON rr.restaurant_id=rl.restaurant_id AND rr.id=rl.refund_id WHERE rl.restaurant_id=l.restaurant_id AND rl.ticket_line_id=l.id AND rr.status='COMPLETED') FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.ticket_id=? AND l.id=? AND l.status='ACTIVE'`, a.ActiveRestaurantID, ticketID, line.TicketLineID).Scan(&sold, &lineTotal, &already); err != nil || already+line.Quantity > sold {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT quantity,line_total_gross_cents,(SELECT COALESCE(SUM(rl.quantity),0) FROM pos_refund_lines rl JOIN pos_refunds rr ON rr.restaurant_id=rl.restaurant_id AND rr.id=rl.refund_id WHERE rl.restaurant_id=l.restaurant_id AND rl.ticket_line_id=l.id AND rr.status='COMPLETED') FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.ticket_id=? AND l.id=? AND l.status='ACTIVE'`), a.ActiveRestaurantID, ticketID, line.TicketLineID).Scan(&sold, &lineTotal, &already); err != nil || already+line.Quantity > sold {
 			httpx.WriteError(w, 409, "Refund quantity exceeds sale")
 			return
 		}
@@ -722,13 +743,13 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusConflict, "Refund line amount exceeds selected quantity")
 			return
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_refund_lines (restaurant_id,refund_id,ticket_line_id,quantity,amount_cents,restock_requested,reason) VALUES (?,?,?,?,?,?,?)`, a.ActiveRestaurantID, refundID, line.TicketLineID, line.Quantity, line.AmountCents, stockBoolInt(line.RestockRequested), strings.TrimSpace(line.Reason))
+		_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_refund_lines (restaurant_id,refund_id,ticket_line_id,quantity,amount_cents,restock_requested,reason) VALUES (?,?,?,?,?,?,?)`), a.ActiveRestaurantID, refundID, line.TicketLineID, line.Quantity, line.AmountCents, stockBoolInt(line.RestockRequested), strings.TrimSpace(line.Reason))
 		if err != nil {
 			httpx.WriteError(w, 500, "Error saving refund line")
 			return
 		}
 		if line.RestockRequested {
-			rows, rowErr := tx.QueryContext(r.Context(), `SELECT id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status FROM pos_ticket_line_stock WHERE restaurant_id=? AND ticket_line_id=? AND status='APPLIED' ORDER BY id`, a.ActiveRestaurantID, line.TicketLineID)
+			rows, rowErr := tx.QueryContext(r.Context(), nativeSQL(`SELECT id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status FROM pos_ticket_line_stock WHERE restaurant_id=? AND ticket_line_id=? AND status='APPLIED' ORDER BY id`, `SELECT id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,CAST(status AS text) FROM pos_ticket_line_stock WHERE restaurant_id=? AND ticket_line_id=? AND status='APPLIED' ORDER BY id`), a.ActiveRestaurantID, line.TicketLineID)
 			if rowErr != nil {
 				httpx.WriteError(w, 500, "Error loading stock return")
 				return
@@ -745,40 +766,44 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 				returnBase := base * (line.Quantity / originalQty)
 				var unitID int64
 				var factor float64
-				if err = tx.QueryRowContext(r.Context(), `SELECT id,factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND is_default_display=1 LIMIT 1`, a.ActiveRestaurantID, itemID).Scan(&unitID, &factor); err != nil {
+				if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT id,factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND is_default_display=1 LIMIT 1`), a.ActiveRestaurantID, itemID).Scan(&unitID, &factor); err != nil {
 					rows.Close()
 					httpx.WriteError(w, 500, "Error preparing stock return")
 					return
 				}
-				_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, a.ActiveRestaurantID, itemID, warehouseID)
+				_, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON CONFLICT (restaurant_id,stock_item_id,warehouse_id) DO NOTHING`), a.ActiveRestaurantID, itemID, warehouseID)
 				if err != nil {
 					rows.Close()
 					httpx.WriteError(w, 500, "Error returning stock")
 					return
 				}
 				var current float64
-				if err = tx.QueryRowContext(r.Context(), `SELECT qty_base FROM stock_levels WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=? FOR UPDATE`, a.ActiveRestaurantID, itemID, warehouseID).Scan(&current); err != nil {
+				if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT qty_base FROM stock_levels WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=? FOR UPDATE`), a.ActiveRestaurantID, itemID, warehouseID).Scan(&current); err != nil {
 					rows.Close()
 					httpx.WriteError(w, 500, "Error returning stock")
 					return
 				}
-				moveRes, moveErr := tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,note,actor_user_id) VALUES (?,?,?,?,'RETURN',?,?,'pos_refund',?,?,?,?)`, a.ActiveRestaurantID, itemID, warehouseID, returnBase, returnBase/factor, unitID, refundID, "pos-refund:"+strconv.FormatInt(refundID, 10)+":snapshot:"+strconv.FormatInt(snapshotID, 10), "POS refund restock", a.User.ID)
+				movementID, moveErr := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,note,actor_user_id) VALUES (?,?,?,?,'RETURN',?,?,'pos_refund',?,?,?,?)`), "id", a.ActiveRestaurantID, itemID, warehouseID, returnBase, returnBase/factor, unitID, refundID, "pos-refund:"+strconv.FormatInt(refundID, 10)+":snapshot:"+strconv.FormatInt(snapshotID, 10), "POS refund restock", a.User.ID)
 				if moveErr != nil {
 					rows.Close()
 					httpx.WriteError(w, 500, "Error returning stock")
 					return
 				}
-				movementID, _ := moveRes.LastInsertId()
-				_, err = tx.ExecContext(r.Context(), `UPDATE stock_levels SET qty_base=qty_base+?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`, returnBase, a.ActiveRestaurantID, itemID, warehouseID)
+				_, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_levels SET qty_base=qty_base+?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`), returnBase, a.ActiveRestaurantID, itemID, warehouseID)
 				if err != nil {
 					rows.Close()
 					httpx.WriteError(w, 500, "Error returning stock")
 					return
 				}
 				var totalRestocked float64
-				_ = tx.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(rl.quantity),0) FROM pos_refund_lines rl JOIN pos_refunds rr ON rr.restaurant_id=rl.restaurant_id AND rr.id=rl.refund_id WHERE rl.restaurant_id=? AND rl.ticket_line_id=? AND rl.restock_requested=1 AND rr.status='COMPLETED'`, a.ActiveRestaurantID, line.TicketLineID).Scan(&totalRestocked)
+				_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored error continues the tx
+					return tx.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(SUM(rl.quantity),0) FROM pos_refund_lines rl JOIN pos_refunds rr ON rr.restaurant_id=rl.restaurant_id AND rr.id=rl.refund_id WHERE rl.restaurant_id=? AND rl.ticket_line_id=? AND rl.restock_requested=1 AND rr.status='COMPLETED'`), a.ActiveRestaurantID, line.TicketLineID).Scan(&totalRestocked)
+				})
 				if totalRestocked >= originalQty {
-					_, _ = tx.ExecContext(r.Context(), `UPDATE pos_ticket_line_stock SET status='REVERSED',return_movement_id=?,reversed_at=NOW() WHERE restaurant_id=? AND id=?`, movementID, a.ActiveRestaurantID, snapshotID)
+					_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored error continues the tx
+						_, e := tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_line_stock SET status='REVERSED',return_movement_id=?,reversed_at=NOW() WHERE restaurant_id=? AND id=?`, `UPDATE pos_ticket_line_stock SET status='REVERSED',return_movement_id=?,reversed_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND id=?`), movementID, a.ActiveRestaurantID, snapshotID)
+						return e
+					})
 				}
 				_ = snapshotStatus
 				_ = current
@@ -796,7 +821,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 	if newRefunded == paid {
 		newStatus = "REFUNDED"
 	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET refunded_cents=?,status=?,stock_status=CASE WHEN ?='REFUNDED' AND EXISTS(SELECT 1 FROM pos_ticket_line_stock s WHERE s.restaurant_id=pos_tickets.restaurant_id AND s.ticket_id=pos_tickets.id) AND NOT EXISTS(SELECT 1 FROM pos_ticket_line_stock s WHERE s.restaurant_id=pos_tickets.restaurant_id AND s.ticket_id=pos_tickets.id AND s.status<>'REVERSED') THEN 'REVERSED' ELSE stock_status END,version=version+1 WHERE restaurant_id=? AND id=?`, newRefunded, newStatus, newStatus, a.ActiveRestaurantID, ticketID)
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_tickets SET refunded_cents=?,status=?,stock_status=CASE WHEN ?='REFUNDED' AND EXISTS(SELECT 1 FROM pos_ticket_line_stock s WHERE s.restaurant_id=pos_tickets.restaurant_id AND s.ticket_id=pos_tickets.id) AND NOT EXISTS(SELECT 1 FROM pos_ticket_line_stock s WHERE s.restaurant_id=pos_tickets.restaurant_id AND s.ticket_id=pos_tickets.id AND s.status<>'REVERSED') THEN 'REVERSED' ELSE stock_status END,version=version+1 WHERE restaurant_id=? AND id=?`, `UPDATE pos_tickets SET refunded_cents=?,status=?,stock_status=CASE WHEN CAST(? AS text)='REFUNDED' AND EXISTS(SELECT 1 FROM pos_ticket_line_stock s WHERE s.restaurant_id=pos_tickets.restaurant_id AND s.ticket_id=pos_tickets.id) AND NOT EXISTS(SELECT 1 FROM pos_ticket_line_stock s WHERE s.restaurant_id=pos_tickets.restaurant_id AND s.ticket_id=pos_tickets.id AND s.status<>'REVERSED') THEN 'REVERSED' ELSE stock_status END,version=version+1 WHERE restaurant_id=? AND id=?`), newRefunded, newStatus, newStatus, a.ActiveRestaurantID, ticketID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error refunding ticket")
 		return
@@ -827,16 +852,16 @@ func (s *Server) handleBOPOSVisitClose(w http.ResponseWriter, r *http.Request) {
 	var date, service, channel string
 	var tableID sql.NullInt64
 	var status string
-	if err = tx.QueryRowContext(r.Context(), `SELECT service_date,service_type,channel,table_id,status FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, visitID).Scan(&date, &service, &channel, &tableID, &status); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT service_date,service_type,channel,table_id,status FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT service_date,CAST(service_type AS text),CAST(channel AS text),table_id,CAST(status AS text) FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, visitID).Scan(&date, &service, &channel, &tableID, &status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, 409, "Visit is not open")
 		return
 	}
 	var open int
-	if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`, a.ActiveRestaurantID, visitID).Scan(&open); err != nil || open > 0 {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN'`), a.ActiveRestaurantID, visitID).Scan(&open); err != nil || open > 0 {
 		httpx.WriteError(w, 409, "Visit has open tickets")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, a.User.ID, a.ActiveRestaurantID, visitID)
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, `UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),version=version+1 WHERE restaurant_id=? AND id=?`), a.User.ID, a.ActiveRestaurantID, visitID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error closing visit")
 		return
@@ -888,7 +913,7 @@ func (s *Server) handleBOPOSCoverAdjustment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_cover_adjustments (restaurant_id,visit_id,service_date,service_type,delta_covers,reason,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, in.VisitID, in.Date, in.ServiceType, in.Delta, strings.TrimSpace(in.Reason), in.IdempotencyKey, a.User.ID)
+	adjID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_cover_adjustments (restaurant_id,visit_id,service_date,service_type,delta_covers,reason,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, in.VisitID, in.Date, in.ServiceType, in.Delta, strings.TrimSpace(in.Reason), in.IdempotencyKey, a.User.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			tx.Rollback()
@@ -907,7 +932,7 @@ func (s *Server) handleBOPOSCoverAdjustment(w http.ResponseWriter, r *http.Reque
 		httpx.WriteError(w, 500, "Error adjusting covers")
 		return
 	}
-	id, _ := res.LastInsertId()
+	id := adjID
 	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, in.Date)
 	httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": id, "covers": covers})
 }
@@ -934,7 +959,7 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusBadRequest, "from no puede ser posterior a to")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT ck.service_date,ck.service_type,ck.pos_covers,ck.adjustments,COALESCE(a.covers,0),COALESCE(a.source,'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date,v.service_type) ck LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=ck.service_date AND a.service_type=ck.service_type ORDER BY ck.service_date DESC,ck.service_type`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT ck.service_date,ck.service_type,ck.pos_covers,ck.adjustments,COALESCE(a.covers,0),COALESCE(a.source,'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date,v.service_type) ck LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=ck.service_date AND a.service_type=ck.service_type ORDER BY ck.service_date DESC,ck.service_type`, `SELECT ck.service_date,CAST(ck.service_type AS text),ck.pos_covers,ck.adjustments,COALESCE(a.covers,0),COALESCE(CAST(a.source AS text),'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND CAST(c.service_type AS text)=CAST(v.service_type AS text)),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.restaurant_id,v.service_date,v.service_type) ck LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=ck.service_date AND CAST(a.service_type AS text)=CAST(ck.service_type AS text) ORDER BY ck.service_date DESC,ck.service_type`), a.ActiveRestaurantID, from, to, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading covers")
 		return
@@ -965,7 +990,7 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 // Coordination id: pos_checkout_shift_attribution_v1
 func posCheckoutShift(ctx context.Context, tx *sql.Tx, restaurantID int, required bool) (*int64, error) {
 	var currentShift int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`, restaurantID).Scan(&currentShift)
+	err := tx.QueryRowContext(ctx, portableSQL(`SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`), restaurantID).Scan(&currentShift)
 	if err == nil {
 		return &currentShift, nil
 	}

@@ -80,9 +80,9 @@ type assistantKeepaliveConfig struct {
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
-	botConversation, err := newBotConversationStore(cfg.BotContextSQLitePath)
+	botConversation, err := newBotConversationStoreFor(cfg)
 	if err != nil {
-		panic(fmt.Sprintf("initialize WhatsApp bot context SQLite: %v", err))
+		panic(fmt.Sprintf("initialize WhatsApp bot context store: %v", err))
 	}
 	// wa_bot_image_read_v1: the photos of the privileged chats and their
 	// readings survive a restart (a deploy wiped the bill of a pending invoice).
@@ -325,6 +325,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
 		r.With(s.requireBOSession, reservasGate).Patch("/bookings/{id}", s.handleBOBookingPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/cancel", s.handleBOBookingCancel)
+		// Coordination id: booking_confirmation_resend_v1 - re-send the booking
+		// confirmation WhatsApp (summary + QR + regenerated adelanto receipt).
+		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/resend-confirmation", s.handleBOBookingResendConfirmation)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/cancelled", s.handleBOBookingsCancelledByDate)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/modified", s.handleBOBookingsModifiedByDate)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/cancelled/{id}/reactivate", s.handleBOBookingReactivate)
@@ -689,14 +692,22 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/seo", s.handleBOGroupMenusV2PatchSEO)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/menu-type", s.handleBOGroupMenusV2PatchMenuType)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2PutSections)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2CreateSection)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}", s.handleBOGroupMenusV2PatchSection)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/sections/{sectionId}", s.handleBOGroupMenusV2DeleteSection)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/visibility", s.handleBOGroupMenusV2PatchSectionVisibility)
 		// Coordination id: dessert_section_source_v1 (general carta of desserts <-> custom section list)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dessert-source", s.handleBOGroupMenusV2PatchSectionDessertSource)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/annotations", s.handleBOGroupMenusV2PatchSectionAnnotations)
+		// Coordination id: menu_section_cta_v1
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/cta", s.handleBOGroupMenusV2PutSectionCta)
+		// Coordination id: menu_reorder_settings_v1
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/reorder-settings", s.handleBOGroupMenusV2PutReorderSettings)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2GetSectionDishes)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2CreateSectionDish)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}", s.handleBOGroupMenusV2PatchSectionDish)
+		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}", s.handleBOGroupMenusV2DeleteSectionDish)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image", s.handleBOGroupMenusV2UploadSectionDishImage)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai", s.handleBOGroupMenusV2GenerateSectionDishAIImage)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/preview-image", s.handleBOGroupMenusV2UploadMenuPreviewImage)
@@ -958,6 +969,9 @@ func (s *Server) Routes() http.Handler {
 		// food-type settings switch fail.
 		r.With(s.requireBOSession, menusGate).Get("/restaurant/pages/visibility", s.handleGetPageVisibility)
 		r.With(s.requireBOSession, menusGate).Patch("/restaurant/pages/visibility", s.handlePageVisibilityPatch)
+		// Coordination id: cafes_page_seo_v1
+		r.With(s.requireBOSession, menusGate).Get("/restaurant/pages/cafes-seo", s.handleBOCafesSEOGet)
+		r.With(s.requireBOSession, menusGate).Put("/restaurant/pages/cafes-seo", s.handleBOCafesSEOPut)
 		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
 		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
 			websiteBuilder.RegisterRoutes(r)
@@ -1109,6 +1123,14 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence", s.handleBOAffluence)
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence/seasonal", s.handleBOAffluenceSeasonal)
 
+		// Simple billing entries typed by hand for Estadísticas > Ventas
+		// (manual_billing_stats_v1): create one entry, read the period ledger.
+		r.With(s.requireBOSession, statisticsGate).Post("/analytics/manual-billing", s.handleBOAnalyticsManualBillingCreate)
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/manual-billing", s.handleBOAnalyticsManualBilling)
+		// Same months across every year with entries: the two seasonality
+		// comparisons stay independent from the page period filters.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/manual-billing/seasonal", s.handleBOAnalyticsManualBillingSeasonal)
+
 		// Platform (superadmin) endpoints — cross-tenant management.
 		// All gated by requireBOSuperadmin (is_superadmin=1 only).
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/dashboard", s.handlePlatformDashboard)
@@ -1203,6 +1225,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/sidebar", s.handlePublicMenusSidebar)
+		r.Get("/public/cafes-seo", s.handlePublicCafesSEO) // cafes_page_seo_v1
 		r.Get("/menus/home", s.handlePublicMenusHome)
 		r.Get("/menus/by-slug/{slug}", s.handlePublicMenuBySlug)
 		r.Get("/menus/{menuID}", s.handlePublicMenuByRouteID)
@@ -1426,7 +1449,7 @@ func (s *Server) handleMenuVisibility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), "SELECT menu_key, is_active FROM menu_visibility WHERE restaurant_id = ?", restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL("SELECT menu_key, is_active FROM menu_visibility WHERE restaurant_id = ?"), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menu_visibility")
 		return
@@ -1487,6 +1510,9 @@ func (s *Server) handleMenuFinde(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) fetchMenuByTable(r *http.Request, table string) (MenuResponse, error) {
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		return MenuResponse{Success: true, Entrantes: []Dish{}, Principales: []Dish{}, Arroces: []Dish{}}, nil
+	}
 	entrantes, err := s.fetchDishes(r, table, "ENTRANTE")
 	if err != nil {
 		return MenuResponse{}, err
@@ -1520,8 +1546,12 @@ func (s *Server) fetchDishes(r *http.Request, table string, dishType string) ([]
 		return nil, errors.New("Unknown restaurant")
 	}
 
-	q := "SELECT NUM, DESCRIPCION, alergenos FROM " + table + " WHERE restaurant_id = ? AND TIPO = ? AND active = 1 ORDER BY NUM ASC"
-	rows, err := s.db.QueryContext(r.Context(), q, restaurantID, dishType)
+	// table is a code constant with its exact source case; PG needs the mixed-case
+	// identifiers quoted (tables were created quoted by the migration).
+	q := nativeSQL(
+		"SELECT NUM, DESCRIPCION, alergenos FROM "+table+" WHERE restaurant_id = ? AND TIPO = ? AND active = 1 ORDER BY NUM ASC",
+		`SELECT "NUM", "DESCRIPCION", alergenos FROM "`+table+`" WHERE restaurant_id = ? AND "TIPO" = ? AND active = 1 ORDER BY "NUM" ASC`)
+	rows, err := s.db.QueryContext(r.Context(), selectedSQL(q), restaurantID, dishType)
 	if err != nil {
 		return nil, errors.New("Error consultando " + table)
 	}
@@ -1558,9 +1588,11 @@ func (s *Server) fetchPrecio(r *http.Request, table string) (string, error) {
 		return "", errors.New("Unknown restaurant")
 	}
 
-	q := "SELECT DESCRIPCION FROM " + table + " WHERE restaurant_id = ? AND TIPO = 'PRECIO' AND active = 1 ORDER BY NUM ASC LIMIT 1"
+	q := nativeSQL(
+		"SELECT DESCRIPCION FROM "+table+" WHERE restaurant_id = ? AND TIPO = 'PRECIO' AND active = 1 ORDER BY NUM ASC LIMIT 1",
+		`SELECT "DESCRIPCION" FROM "`+table+`" WHERE restaurant_id = ? AND "TIPO" = 'PRECIO' AND active = 1 ORDER BY "NUM" ASC LIMIT 1`)
 	var precio sql.NullString
-	if err := s.db.QueryRowContext(r.Context(), q, restaurantID).Scan(&precio); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), selectedSQL(q), restaurantID).Scan(&precio); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
@@ -1579,7 +1611,7 @@ func (s *Server) handlePostres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), "SELECT NUM, DESCRIPCION, alergenos FROM POSTRES WHERE restaurant_id = ? AND active = 1 ORDER BY NUM ASC", restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL("SELECT NUM, DESCRIPCION, alergenos FROM POSTRES WHERE restaurant_id = ? AND active = 1 ORDER BY NUM ASC", `SELECT "NUM", "DESCRIPCION", alergenos FROM "POSTRES" WHERE restaurant_id = ? AND active = 1 ORDER BY "NUM" ASC`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando POSTRES")
 		return
@@ -1659,7 +1691,13 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 	// The response keeps naming each wine by its legacy num, which is what the
 	// map join below materialises, and by the legacy ordering the frontend
 	// relies on.
-	fields := vinoV2NumExpr + ` AS num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, (foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto`
+	// Reviewed fragments: vinoV2From (plain LEFT JOIN) and
+	// vinoV2WhereLegacyNumJoined (scalar subquery) are valid on both dialects;
+	// vinoV2NumExpr uses CAST AS SIGNED (MySQL-only) and the has_foto boolean
+	// expression is scanned into an int, so both get explicit PG variants.
+	fields := nativeSQL(vinoV2NumExpr, `CAST(COALESCE(m.legacy_num, v.id) AS bigint)`) +
+		nativeSQL(` AS num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, (foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto`,
+			` AS num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, CASE WHEN foto_path IS NOT NULL AND LENGTH(foto_path) > 0 THEN 1 ELSE 0 END AS has_foto`)
 	if includeImage {
 		fields += ", foto_path"
 	}
@@ -1679,7 +1717,7 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 		query += " LIMIT 1"
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(query), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando VINOS")
 		return
@@ -2017,9 +2055,29 @@ func (s *Server) publicSPAHandler() http.Handler {
 	s.spaOnce.Do(func() {
 		fallback := SPAHandler(s.cfg.StaticDir)
 		withMarkdown := newPublicMarkdownHandler(s.cfg.StaticDir, fallback, s.loadEditorialRiceMenus)
-		s.spaHandler = newEditorialRiceSSR(s.cfg.StaticDir, withMarkdown, s.loadEditorialRiceMenus)
+		s.spaHandler = trailingSlashRedirect(newEditorialRiceSSR(s.cfg.StaticDir, withMarkdown, s.loadEditorialRiceMenus))
 	})
 	return s.spaHandler
+}
+
+// trailingSlashRedirect sends every public page URL with a trailing slash
+// (/contacto/, /en/) to its slashless canonical with one 301, so crawlers stop
+// finding a 200 duplicate of each page. Backslashes become slashes (browsers
+// read them as /) and leading slashes collapse to one, so //host/ or /\host/
+// can never become an off-site redirect.
+// Coordination id: seo_trailing_slash_301_v1
+func trailingSlashRedirect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.ReplaceAll(r.URL.Path, "\\", "/")
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			len(path) > 1 && strings.HasSuffix(path, "/") &&
+			!strings.HasPrefix(r.RequestURI, "/api/") && !strings.HasPrefix(path, "/backoffice/") {
+			log.Printf("[seo_trailing_slash_301_v1] redirect path=%q", path)
+			seoRedirect(w, r, "/"+strings.Trim(path, "/"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func SPAHandler(staticDir string) http.Handler {
