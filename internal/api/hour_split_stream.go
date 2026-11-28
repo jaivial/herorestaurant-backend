@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,8 +71,23 @@ func (h *hourSplitNotifyHub) notify(restaurantID int) {
 // notifyHourSplitChanged is called by every booking / hour-split writer.
 func (s *Server) notifyHourSplitChanged(restaurantID int) {
 	if restaurantID > 0 {
+		invalidateCalendarCache(restaurantID)
 		hourSplitHub.notify(restaurantID)
 	}
+}
+
+// invalidateCalendarCache drops the cached month calendars (backoffice and
+// public share the "rid:year-month" keys) so the live refetch that follows a
+// booking write reads fresh day counters. Coordination id: bookings_realtime_v1
+func invalidateCalendarCache(restaurantID int) {
+	prefix := strconv.Itoa(restaurantID) + ":"
+	calendarCacheMu.Lock()
+	for k := range calendarCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(calendarCache, k)
+		}
+	}
+	calendarCacheMu.Unlock()
 }
 
 // hourSplitSnapshot is the payload shared by the GET and the stream.
