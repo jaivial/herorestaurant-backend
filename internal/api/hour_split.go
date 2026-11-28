@@ -267,6 +267,17 @@ func (s *Server) loadHourPercentages(ctx context.Context, restaurantID int, date
 		}
 	}
 
+	// Coordination id: hour_full_warning_v1 - dual system: a date without its
+	// own split follows the restaurant-wide template (Configuración > Reparto por
+	// hora) when that template covers every active hour; otherwise equal split.
+	if len(stored) == 0 {
+		if defaults, derr := s.loadReservationDefaults(ctx, restaurantID); derr == nil && len(defaults.DefaultHourPercentages) > 0 {
+			if tpl, _ := normalizePercentages(defaults.DefaultHourPercentages, activeHours); len(tpl) > 0 && validatePercentagesSum(tpl) {
+				return tpl, false, nil
+			}
+		}
+	}
+
 	normalized, synthesized := normalizePercentages(stored, activeHours)
 	return normalized, synthesized, nil
 }

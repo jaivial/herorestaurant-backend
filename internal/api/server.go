@@ -700,6 +700,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/annotations", s.handleBOGroupMenusV2PatchSectionAnnotations)
 		// Coordination id: menu_section_cta_v1
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/cta", s.handleBOGroupMenusV2PutSectionCta)
+		// Coordination id: menu_reorder_settings_v1
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/reorder-settings", s.handleBOGroupMenusV2PutReorderSettings)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2GetSectionDishes)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2CreateSectionDish)

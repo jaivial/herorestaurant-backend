@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path"
 	"sort"
@@ -1035,10 +1036,12 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"seo_faq":                 menuSEO.SEOFAQ,
 			"seo_faq_english":         menuSEO.SEOFAQEnglish,
 			"editor_preview_open":     editorPreviewOpen,
-			"menu_title":              title,
-			"price":                   price,
-			"active":                  activeInt != 0,
-			"is_draft":                draftInt != 0,
+			// Coordination id: menu_reorder_settings_v1
+			"reorder_settings": s.loadMenuReorderSettings(r.Context(), a.ActiveRestaurantID, menuID),
+			"menu_title":       title,
+			"price":            price,
+			"active":           activeInt != 0,
+			"is_draft":         draftInt != 0,
 			// Coordination id: menu_type_numeric_v1
 			"menu_type":               MenuTypeFromAny(menuType),
 			"menu_type_name":          MenuTypeName(MenuTypeFromAny(menuType)),
@@ -2540,6 +2543,73 @@ func (s *Server) handleBODishesCatalogSearch(w http.ResponseWriter, r *http.Requ
 			row["foto_url"] = s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, fotoPath)
 		}
 		items = append(items, row)
+	}
+	rows.Close()
+
+	// Coordination id: menu_dish_library_v1 - "Añadir desde biblioteca" searches
+	// the whole restaurant: the comida platos above plus every dish already used
+	// in any menu section, deduplicated by title. Menu rows get negative ids so
+	// they never collide with comida_items ids.
+	if strings.TrimSpace(r.URL.Query().Get("scope")) == "library" && len(items) < limit {
+		seen := map[string]bool{}
+		for _, it := range items {
+			seen[strings.ToLower(strings.TrimSpace(fmt.Sprint(it["title"])))] = true
+		}
+		libRows, lerr := s.db.QueryContext(r.Context(), nativeSQL(`
+			SELECT d.id, d.title_snapshot, COALESCE(d.description_snapshot, ''), d.allergens_json,
+			       d.supplement_enabled, d.supplement_price, COALESCE(d.foto_path, '')
+			FROM group_menu_section_dishes_v2 d
+			WHERE d.restaurant_id = ? AND d.title_snapshot LIKE ?
+			ORDER BY d.updated_at DESC, d.id DESC
+			LIMIT 200
+		`, `
+			SELECT d.id, d.title_snapshot, COALESCE(d.description_snapshot, ''), CAST(d.allergens_json AS text),
+			       d.supplement_enabled, d.supplement_price, COALESCE(d.foto_path, '')
+			FROM group_menu_section_dishes_v2 d
+			WHERE d.restaurant_id = ? AND LOWER(d.title_snapshot) COLLATE "C" LIKE ?
+			ORDER BY d.updated_at DESC NULLS LAST, d.id DESC
+			LIMIT 200
+		`), a.ActiveRestaurantID, qLike)
+		if lerr == nil {
+			defer libRows.Close()
+			for libRows.Next() && len(items) < limit {
+				var (
+					id           int64
+					title        string
+					description  string
+					allergensRaw sql.NullString
+					suppEnabled  int
+					suppPrice    sql.NullFloat64
+					fotoPath     string
+				)
+				if err := libRows.Scan(&id, &title, &description, &allergensRaw, &suppEnabled, &suppPrice, &fotoPath); err != nil {
+					break
+				}
+				key := strings.ToLower(strings.TrimSpace(title))
+				if key == "" || seen[key] {
+					continue
+				}
+				seen[key] = true
+				row := map[string]any{
+					"id":                         -id,
+					"source":                     "menu",
+					"title":                      title,
+					"description":                description,
+					"allergens":                  anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
+					"default_supplement_enabled": suppEnabled != 0,
+					"default_supplement_price":   nil,
+				}
+				if suppPrice.Valid {
+					row["default_supplement_price"] = suppPrice.Float64
+				}
+				if fotoPath != "" && s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
+					row["foto_url"] = s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, fotoPath)
+				}
+				items = append(items, row)
+			}
+		} else {
+			log.Printf("menu_dish_library_search_failed restaurant=%d err=%v", a.ActiveRestaurantID, lerr)
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": items})
